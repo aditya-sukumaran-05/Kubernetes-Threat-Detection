@@ -1,0 +1,4 @@
+window_start,window_end,connection_count,event_count,unique_source_ips,unique_source_ports,unique_destination_ips,unique_destination_ports,accept_count,close_count,error_count,connection_rate,label
+2026-09-19T12:58:46.783061+00:00,2026-09-19T12:58:56.783061+00:00,28,56,1,1,1,28,28,28,0,2.8,attack
+2026-09-19T12:58:56.783061+00:00,2026-09-19T12:59:06.783061+00:00,26,52,1,1,1,26,26,26,0,2.6,attack
+2026-09-19T12:59:06.783061+00:00,2026-09-19T12:59:16.783061+00:00,6,12,1,1,1,6,6,6,0,0.6,attack
