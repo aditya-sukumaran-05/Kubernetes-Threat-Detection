@@ -6,7 +6,29 @@ import sys
 
 import psutil
 
+from telemetry.runtime_collector import resolve_gadget_executable
+
 OUTPUT_FILE = "telemetry/data/network/network_events.jsonl"
+
+
+def build_network_gadget_command(
+    gadget_version: str = "v0.55.1",
+    namespace: str = "default",
+    selector: str = "app=webapp",
+    custom_bin: str | None = None,
+) -> list[str]:
+    """Build the Inspektor Gadget trace_tcp command using the resolved executable."""
+    gadget_cmd = resolve_gadget_executable(custom_bin)
+    return gadget_cmd + [
+        "run",
+        f"trace_tcp:{gadget_version}",
+        "-n",
+        namespace,
+        "-l",
+        selector,
+        "--output",
+        "json",
+    ]
 
 
 def main() -> None:
@@ -15,6 +37,11 @@ def main() -> None:
     parser.add_argument("--namespace", default="default")
     parser.add_argument("--selector", default="app=webapp")
     parser.add_argument("--gadget-version", default="v0.55.1")
+    parser.add_argument(
+        "--gadget-bin",
+        default=None,
+        help="Custom path or command for the Inspektor Gadget executable.",
+    )
     args = parser.parse_args()
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
 
@@ -40,19 +67,14 @@ def main() -> None:
     env = os.environ.copy()
     env["PATH"] = gadget_dir + os.pathsep + env.get("PATH", "")
 
-    command = [
-        "kubectl",
-        "gadget",
-        "run",
-        f"trace_tcp:{args.gadget_version}",
-        "-n",
-        args.namespace,
-        "-l",
-        args.selector,
-        "--output",
-        "json",
-    ]
-    print("Starting Kubernetes network telemetry collector. Press Ctrl+C to stop.")
+    command = build_network_gadget_command(
+        gadget_version=args.gadget_version,
+        namespace=args.namespace,
+        selector=args.selector,
+        custom_bin=args.gadget_bin,
+    )
+    print("Starting Kubernetes network telemetry collector. Press Ctrl+C to stop.", flush=True)
+    print(f"Using Gadget command: {' '.join(command)}", flush=True)
     try:
         with open(pid_file, "w", encoding="utf-8") as pf:
             pf.write(str(os.getpid()))
@@ -100,7 +122,10 @@ def main() -> None:
     finally:
         try:
             if os.path.exists(pid_file):
-                os.remove(pid_file)
+                with open(pid_file, "r", encoding="utf-8") as pf:
+                    content = pf.read().strip()
+                if content and int(content) == os.getpid():
+                    os.remove(pid_file)
         except Exception:
             pass
 

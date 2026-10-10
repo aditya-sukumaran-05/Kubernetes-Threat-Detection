@@ -30,6 +30,7 @@ DEFAULT_WORKLOAD_PATH = Path("telemetry/data/workload_metrics.csv")
 DEFAULT_RUNTIME_PATH = Path("telemetry/data/runtime/runtime_events.jsonl")
 MAX_RETAINED_WINDOWS = 50
 STALE_THRESHOLD_SECONDS = 30.0
+CLOCK_SKEW_TOLERANCE_SECONDS = 2.0
 
 
 def _check_collector_process(script_name: str, pid_filename: str) -> tuple[bool, int | None]:
@@ -132,6 +133,8 @@ class LiveTelemetryEngine:
         workload_path: Path | str = DEFAULT_WORKLOAD_PATH,
         runtime_path: Path | str = DEFAULT_RUNTIME_PATH,
         max_retained_windows: int = MAX_RETAINED_WINDOWS,
+        stale_threshold_seconds: float = STALE_THRESHOLD_SECONDS,
+        clock_skew_tolerance_seconds: float = CLOCK_SKEW_TOLERANCE_SECONDS,
     ) -> None:
         self.detector = detector or ThreatDetector()
         self.network_path = Path(network_path)
@@ -143,6 +146,8 @@ class LiveTelemetryEngine:
         else:
             self.runtime_path = Path(runtime_path)
         self.max_retained_windows = max_retained_windows
+        self.stale_threshold_seconds = float(stale_threshold_seconds)
+        self.clock_skew_tolerance_seconds = float(clock_skew_tolerance_seconds)
 
         # Incremental file tracking
         self._network_file_offset: int = 0
@@ -313,10 +318,11 @@ class LiveTelemetryEngine:
             if last_ts is None:
                 status = f"Listening (PID {proc_pid}) - awaiting first TCP socket event"
                 is_active = True
-            elif delta_sec is not None and 0 <= delta_sec <= STALE_THRESHOLD_SECONDS:
-                status = f"Active (PID {proc_pid}) - latest event {delta_sec:.1f}s ago"
+            elif delta_sec is not None and -self.clock_skew_tolerance_seconds <= delta_sec <= self.stale_threshold_seconds:
+                display_sec = max(0.0, delta_sec)
+                status = f"Active (PID {proc_pid}) - latest event {display_sec:.1f}s ago"
                 is_active = True
-            elif delta_sec is not None and delta_sec < 0:
+            elif delta_sec is not None and delta_sec < -self.clock_skew_tolerance_seconds:
                 status = f"Clock skew / future timestamp: {last_ts.isoformat()}"
                 is_active = False
             else:
@@ -328,10 +334,11 @@ class LiveTelemetryEngine:
             if not self._network_valid_events:
                 status = "Capture file present, but collector process offline"
                 is_active = False
-            elif delta_sec is not None and 0 <= delta_sec <= STALE_THRESHOLD_SECONDS:
-                status = f"Collector Offline (recent writes detected {delta_sec:.1f}s ago)"
+            elif delta_sec is not None and -self.clock_skew_tolerance_seconds <= delta_sec <= self.stale_threshold_seconds:
+                display_sec = max(0.0, delta_sec)
+                status = f"Collector Offline (recent writes detected {display_sec:.1f}s ago)"
                 is_active = False
-            elif delta_sec is not None and delta_sec < 0:
+            elif delta_sec is not None and delta_sec < -self.clock_skew_tolerance_seconds:
                 status = f"Clock skew / future timestamp: {last_ts.isoformat()}"
                 is_active = False
             else:
@@ -371,10 +378,11 @@ class LiveTelemetryEngine:
             if last_ts is None:
                 status = f"Sampling (PID {proc_pid}) - awaiting first pod metrics"
                 is_active = True
-            elif delta_sec is not None and 0 <= delta_sec <= STALE_THRESHOLD_SECONDS:
-                status = f"Active (PID {proc_pid}) - latest sample {delta_sec:.1f}s ago"
+            elif delta_sec is not None and -self.clock_skew_tolerance_seconds <= delta_sec <= self.stale_threshold_seconds:
+                display_sec = max(0.0, delta_sec)
+                status = f"Active (PID {proc_pid}) - latest sample {display_sec:.1f}s ago"
                 is_active = True
-            elif delta_sec is not None and delta_sec < 0:
+            elif delta_sec is not None and delta_sec < -self.clock_skew_tolerance_seconds:
                 status = f"Clock skew / future timestamp: {last_ts.isoformat()}"
                 is_active = False
             else:
@@ -386,10 +394,11 @@ class LiveTelemetryEngine:
             if not self._workload_valid_samples:
                 status = "Metrics CSV present, but collector process offline"
                 is_active = False
-            elif delta_sec is not None and 0 <= delta_sec <= STALE_THRESHOLD_SECONDS:
-                status = f"Collector Offline (recent writes detected {delta_sec:.1f}s ago)"
+            elif delta_sec is not None and -self.clock_skew_tolerance_seconds <= delta_sec <= self.stale_threshold_seconds:
+                display_sec = max(0.0, delta_sec)
+                status = f"Collector Offline (recent writes detected {display_sec:.1f}s ago)"
                 is_active = False
-            elif delta_sec is not None and delta_sec < 0:
+            elif delta_sec is not None and delta_sec < -self.clock_skew_tolerance_seconds:
                 status = f"Clock skew / future timestamp: {last_ts.isoformat()}"
                 is_active = False
             else:
@@ -429,10 +438,11 @@ class LiveTelemetryEngine:
             if last_ts is None:
                 status = f"Listening (PID {proc_pid}) - awaiting container process execution events"
                 is_active = True
-            elif delta_sec is not None and 0 <= delta_sec <= STALE_THRESHOLD_SECONDS:
-                status = f"Active (PID {proc_pid}) - latest event {delta_sec:.1f}s ago"
+            elif delta_sec is not None and -self.clock_skew_tolerance_seconds <= delta_sec <= self.stale_threshold_seconds:
+                display_sec = max(0.0, delta_sec)
+                status = f"Active (PID {proc_pid}) - latest event {display_sec:.1f}s ago"
                 is_active = True
-            elif delta_sec is not None and delta_sec < 0:
+            elif delta_sec is not None and delta_sec < -self.clock_skew_tolerance_seconds:
                 status = f"Clock skew / future timestamp: {last_ts.isoformat()}"
                 is_active = False
             else:
@@ -443,10 +453,11 @@ class LiveTelemetryEngine:
             if not self._runtime_valid_events:
                 status = "Runtime capture file present, but collector process offline"
                 is_active = False
-            elif delta_sec is not None and 0 <= delta_sec <= STALE_THRESHOLD_SECONDS:
-                status = f"Collector Offline (recent writes detected {delta_sec:.1f}s ago)"
+            elif delta_sec is not None and -self.clock_skew_tolerance_seconds <= delta_sec <= self.stale_threshold_seconds:
+                display_sec = max(0.0, delta_sec)
+                status = f"Collector Offline (recent writes detected {display_sec:.1f}s ago)"
                 is_active = False
-            elif delta_sec is not None and delta_sec < 0:
+            elif delta_sec is not None and delta_sec < -self.clock_skew_tolerance_seconds:
                 status = f"Clock skew / future timestamp: {last_ts.isoformat()}"
                 is_active = False
             else:

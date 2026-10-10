@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -365,5 +365,93 @@ def test_live_engine_detects_running_process(tmp_path: Path, monkeypatch: pytest
     assert health.is_process_running is True
     assert health.pid == os.getpid()
     assert "Listening" in health.status_message
+
+
+def test_live_engine_clock_skew_tolerance_tolerates_small_future_drift(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify that a timestamp slightly ahead in the future (within skew tolerance) is tolerated as Active."""
+    import os
+    net_file = tmp_path / "network_events.jsonl"
+    wl_file = tmp_path / "workload_metrics.csv"
+
+    # Drift: 0.5s in the future (well within default 2.0s tolerance)
+    future_ts = (datetime.now(timezone.utc) + timedelta(seconds=0.5)).isoformat()
+    net_file.write_text(_make_raw_net_event(future_ts) + "\n", encoding="utf-8")
+
+    # Mock collector process as alive
+    monkeypatch.setattr(
+        "dashboard.live_engine._check_collector_process",
+        lambda script, pid_file: (True, os.getpid()),
+    )
+
+    engine = LiveTelemetryEngine(network_path=net_file, workload_path=wl_file, clock_skew_tolerance_seconds=2.0)
+    # Target path is not default, so mock is_default_target check or pass mock
+    engine.read_new_network_events()
+    health = engine.get_network_health()
+
+    # Even though process check on non-default file yields is_proc_alive=False, writes are detected recently
+    assert "Clock skew" not in health.status_message
+    assert "Collector Offline (recent writes detected" in health.status_message or "Active" in health.status_message
+
+
+def test_live_engine_clock_skew_exceeded_flags_error(tmp_path: Path) -> None:
+    """Verify that a timestamp far in the future exceeding tolerance is explicitly flagged as clock skew."""
+    net_file = tmp_path / "network_events.jsonl"
+    wl_file = tmp_path / "workload_metrics.csv"
+
+    # Future drift: 10.0s in the future (exceeds default 2.0s tolerance)
+    future_ts = (datetime.now(timezone.utc) + timedelta(seconds=10.0)).isoformat()
+    net_file.write_text(_make_raw_net_event(future_ts) + "\n", encoding="utf-8")
+
+    engine = LiveTelemetryEngine(network_path=net_file, workload_path=wl_file, clock_skew_tolerance_seconds=2.0)
+    engine.read_new_network_events()
+    health = engine.get_network_health()
+
+    assert health.is_active is False
+    assert "Clock skew / future timestamp:" in health.status_message
+
+
+def test_live_engine_configurable_clock_skew_tolerance(tmp_path: Path) -> None:
+    """Verify that clock_skew_tolerance_seconds can be dynamically configured."""
+    net_file = tmp_path / "network_events.jsonl"
+    wl_file = tmp_path / "workload_metrics.csv"
+
+    # 3.0s in the future
+    future_ts = (datetime.now(timezone.utc) + timedelta(seconds=3.0)).isoformat()
+    net_file.write_text(_make_raw_net_event(future_ts) + "\n", encoding="utf-8")
+
+    # 1. With tolerance = 5.0s, 3.0s drift is tolerated
+    engine_wide = LiveTelemetryEngine(network_path=net_file, workload_path=wl_file, clock_skew_tolerance_seconds=5.0)
+    engine_wide.read_new_network_events()
+    health_wide = engine_wide.get_network_health()
+    assert "Clock skew" not in health_wide.status_message
+
+    # 2. With tolerance = 1.0s, 3.0s drift is flagged as clock skew
+    engine_narrow = LiveTelemetryEngine(network_path=net_file, workload_path=wl_file, clock_skew_tolerance_seconds=1.0)
+    engine_narrow.read_new_network_events()
+    health_narrow = engine_narrow.get_network_health()
+    assert health_narrow.is_active is False
+    assert "Clock skew" in health_narrow.status_message
+
+
+def test_live_engine_stale_telemetry_correctly_identified(tmp_path: Path) -> None:
+    """Verify that genuinely stale telemetry is identified as stale and not confused with clock skew."""
+    wl_file = tmp_path / "workload_metrics.csv"
+    net_file = tmp_path / "network_events.jsonl"
+
+    # Stale by 90s (older than default 30.0s threshold)
+    stale_ts = (datetime.now(timezone.utc) - timedelta(seconds=90.0)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    wl_file.write_text(
+        f"timestamp,pod,cpu_millicores,memory_mib,label\n{stale_ts},webapp-test,50,15,normal\n",
+        encoding="utf-8",
+    )
+
+    engine = LiveTelemetryEngine(network_path=net_file, workload_path=wl_file)
+    engine.read_new_workload_samples()
+    health = engine.get_workload_health()
+
+    assert health.is_active is False
+    assert "Idle / Stale" in health.status_message
+    assert "Clock skew" not in health.status_message
+
 
 
