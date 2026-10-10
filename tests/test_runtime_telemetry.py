@@ -156,3 +156,77 @@ def test_runtime_feature_extractor_imports_and_validates_representative_event() 
     assert features["runtime_interactive_shell_count"] == 0
     assert features["runtime_exec_rate"] == 0.1
 
+
+def test_resolve_gadget_executable_custom_and_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from telemetry.runtime_collector import resolve_gadget_executable
+
+    # 1. Custom binary passed directly
+    custom_bin = str(tmp_path / "custom-gadget.exe")
+    Path(custom_bin).touch()
+    assert resolve_gadget_executable(custom_bin) == [custom_bin]
+
+    # 2. Environment variable GADGET_BIN
+    env_bin = str(tmp_path / "env-gadget.exe")
+    Path(env_bin).touch()
+    monkeypatch.setenv("GADGET_BIN", env_bin)
+    assert resolve_gadget_executable() == [env_bin]
+    monkeypatch.delenv("GADGET_BIN")
+
+    # 3. Default resolution returns non-empty list of string tokens
+    resolved = resolve_gadget_executable()
+    assert isinstance(resolved, list)
+    assert len(resolved) >= 1
+    assert any("gadget" in tok.lower() for tok in resolved)
+
+
+def test_runtime_collector_stale_pid_cleanup(tmp_path: Path) -> None:
+    import os
+    from telemetry.runtime_collector import check_and_acquire_pid, release_pid
+
+    pid_file = str(tmp_path / ".runtime_collector.pid")
+    # Write a definitively non-existent PID
+    stale_pid = 99999999
+    Path(pid_file).write_text(str(stale_pid), encoding="utf-8")
+
+    check_and_acquire_pid(pid_file)
+
+    # Stale PID should have been replaced with current process PID
+    assert Path(pid_file).exists()
+    assert Path(pid_file).read_text(encoding="utf-8").strip() == str(os.getpid())
+
+    # Safe release removes current process PID
+    release_pid(pid_file)
+    assert not Path(pid_file).exists()
+
+
+def test_runtime_collector_duplicate_live_pid_rejected(tmp_path: Path) -> None:
+    import os
+    from telemetry.runtime_collector import check_and_acquire_pid
+
+    pid_file = str(tmp_path / ".runtime_collector.pid")
+    # Write current process PID which is guaranteed to be alive
+    Path(pid_file).write_text(str(os.getpid()), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        check_and_acquire_pid(pid_file)
+    assert exc_info.value.code == 1
+
+    # Live PID file must NOT have been deleted
+    assert Path(pid_file).exists()
+    assert Path(pid_file).read_text(encoding="utf-8").strip() == str(os.getpid())
+
+
+def test_runtime_collector_release_pid_safe(tmp_path: Path) -> None:
+    from telemetry.runtime_collector import release_pid
+
+    pid_file = str(tmp_path / ".runtime_collector.pid")
+    # Foreign PID (not os.getpid())
+    foreign_pid = 12345
+    Path(pid_file).write_text(str(foreign_pid), encoding="utf-8")
+
+    release_pid(pid_file)
+    # File must NOT be deleted because PID doesn't match os.getpid()
+    assert Path(pid_file).exists()
+    assert Path(pid_file).read_text(encoding="utf-8").strip() == str(foreign_pid)
+
+

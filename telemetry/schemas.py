@@ -282,8 +282,9 @@ class RuntimeEvent:
         )
 
 
-def load_network_events(path: Path) -> list[NetworkEvent]:
+def load_network_events(path: Path | str) -> list[NetworkEvent]:
     """Load a JSONL capture, failing with a useful line number on bad evidence."""
+    path = Path(path)
     records: list[NetworkEvent] = []
     with path.open(encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
@@ -297,8 +298,9 @@ def load_network_events(path: Path) -> list[NetworkEvent]:
     return records
 
 
-def load_runtime_events(path: Path) -> list[RuntimeEvent]:
+def load_runtime_events(path: Path | str) -> list[RuntimeEvent]:
     """Load a JSONL runtime process capture, failing with a line number on bad evidence."""
+    path = Path(path)
     records: list[RuntimeEvent] = []
     with path.open(encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
@@ -312,8 +314,9 @@ def load_runtime_events(path: Path) -> list[RuntimeEvent]:
     return records
 
 
-def load_workload_samples(path: Path) -> list[WorkloadSample]:
+def load_workload_samples(path: Path | str) -> list[WorkloadSample]:
     """Load a workload CSV using only canonical fields, not collector labels."""
+    path = Path(path)
     with path.open(encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
         required = {"timestamp", "pod", "cpu_millicores", "memory_mib"}
