@@ -154,15 +154,20 @@ class LiveTelemetryEngine:
         self._network_partial_buffer: str = ""
         self._network_valid_events: list[NetworkEvent] = []
         self._network_malformed_count: int = 0
+        self._network_cumulative_count: int = 0
 
+        self._workload_file_offset: int = 0
+        self._workload_partial_buffer: str = ""
         self._workload_seen_lines: set[str] = set()
         self._workload_valid_samples: list[WorkloadSample] = []
         self._workload_malformed_count: int = 0
+        self._workload_cumulative_count: int = 0
 
         self._runtime_file_offset: int = 0
         self._runtime_partial_buffer: str = ""
         self._runtime_valid_events: list[RuntimeEvent] = []
         self._runtime_malformed_count: int = 0
+        self._runtime_cumulative_count: int = 0
 
         # Synchronized windows registry: window_start -> LiveWindowRecord
         self.windows: dict[str, LiveWindowRecord] = {}
@@ -220,38 +225,76 @@ class LiveTelemetryEngine:
                 self._network_malformed_count += 1
                 logger.debug("Skipped malformed network event: %s", exc)
 
+        self._network_cumulative_count += len(new_events)
         return new_events
 
     def read_new_workload_samples(self) -> list[WorkloadSample]:
-        """Incrementally read new valid WorkloadSamples from CSV."""
+        """Incrementally read new valid WorkloadSamples from CSV using byte-offset seeking."""
         resolved = self._resolve_path(self.workload_path)
         if not resolved.exists() or resolved.stat().st_size == 0:
             return []
 
-        new_samples: list[WorkloadSample] = []
+        file_size = resolved.stat().st_size
+        if file_size < self._workload_file_offset:
+            self._workload_file_offset = 0
+            self._workload_partial_buffer = ""
+            self._workload_seen_lines.clear()
+
         try:
-            with resolved.open("r", encoding="utf-8-sig", newline="") as handle:
-                reader = csv.DictReader(handle)
-                if not reader.fieldnames:
-                    return []
-                required = {"timestamp", "pod", "cpu_millicores", "memory_mib"}
-                if not required.issubset(reader.fieldnames):
-                    return []
-                for row in reader:
-                    # Deduplicate rows by raw timestamp + pod
-                    row_key = f"{row.get('timestamp')}|{row.get('pod')}"
-                    if row_key in self._workload_seen_lines:
-                        continue
-                    self._workload_seen_lines.add(row_key)
-                    try:
-                        sample = WorkloadSample.from_raw(row)
-                        new_samples.append(sample)
-                        self._workload_valid_samples.append(sample)
-                    except SchemaError:
-                        self._workload_malformed_count += 1
+            with resolved.open("r", encoding="utf-8", errors="replace") as handle:
+                handle.seek(self._workload_file_offset)
+                chunk = handle.read()
+                self._workload_file_offset = handle.tell()
         except OSError as exc:
             logger.warning("Error reading workload capture %s: %s", resolved, exc)
             return []
+
+        if not chunk:
+            return []
+
+        if chunk.startswith("\ufeff"):
+            chunk = chunk[1:]
+
+        combined = self._workload_partial_buffer + chunk
+        lines = combined.split("\n")
+        self._workload_partial_buffer = lines.pop()
+
+        new_samples: list[WorkloadSample] = []
+        for line in lines:
+            line_str = line.strip()
+            if not line_str:
+                continue
+            if line_str.startswith("timestamp,") or "cpu_millicores" in line_str:
+                continue
+
+            try:
+                parts = next(csv.reader([line_str]))
+            except Exception:
+                self._workload_malformed_count += 1
+                continue
+
+            if len(parts) < 4:
+                self._workload_malformed_count += 1
+                continue
+
+            row = {
+                "timestamp": parts[0].strip(),
+                "pod": parts[1].strip(),
+                "cpu_millicores": parts[2].strip(),
+                "memory_mib": parts[3].strip(),
+            }
+            row_key = f"{row['timestamp']}|{row['pod']}"
+            if row_key in self._workload_seen_lines:
+                continue
+            self._workload_seen_lines.add(row_key)
+
+            try:
+                sample = WorkloadSample.from_raw(row)
+                new_samples.append(sample)
+                self._workload_valid_samples.append(sample)
+                self._workload_cumulative_count += 1
+            except SchemaError:
+                self._workload_malformed_count += 1
 
         return new_samples
 
@@ -297,6 +340,7 @@ class LiveTelemetryEngine:
             logger.warning("Error reading runtime event capture %s: %s", resolved, exc)
             return []
 
+        self._runtime_cumulative_count += len(new_events)
         return new_events
 
     def get_network_health(self) -> CollectorHealth:
@@ -350,7 +394,7 @@ class LiveTelemetryEngine:
             source_name="Network (eBPF TCP Trace)",
             file_path=resolved,
             file_exists=file_exists,
-            total_valid_records=len(self._network_valid_events),
+            total_valid_records=self._network_cumulative_count,
             malformed_records=self._network_malformed_count,
             last_record_timestamp=last_ts,
             is_active=is_active,
@@ -410,7 +454,7 @@ class LiveTelemetryEngine:
             source_name="Workload (cgroup / Metrics Server)",
             file_path=resolved,
             file_exists=file_exists,
-            total_valid_records=len(self._workload_valid_samples),
+            total_valid_records=self._workload_cumulative_count,
             malformed_records=self._workload_malformed_count,
             last_record_timestamp=last_ts,
             is_active=is_active,
@@ -469,7 +513,7 @@ class LiveTelemetryEngine:
             source_name="Runtime (eBPF Process Trace)",
             file_path=resolved,
             file_exists=file_exists,
-            total_valid_records=len(self._runtime_valid_events),
+            total_valid_records=self._runtime_cumulative_count,
             malformed_records=self._runtime_malformed_count,
             last_record_timestamp=last_ts,
             is_active=is_active,
@@ -478,6 +522,38 @@ class LiveTelemetryEngine:
             pid=proc_pid,
         )
 
+    def _prune_telemetry_buffers(self, buffer_extra_windows: int = 5) -> None:
+        """Prune in-memory telemetry event buffers beyond the active observation horizon.
+
+        Retains raw events spanning at least (max_retained_windows + buffer_extra_windows)
+        distinct window boundaries. Strictly preserves sparse events and idle gaps, guaranteeing
+        100% bitwise feature equivalence for all active windows while bounding memory.
+        """
+        max_allowed_windows = self.max_retained_windows + buffer_extra_windows
+
+        # 1. Prune network events by distinct window starts
+        if self._network_valid_events:
+            distinct_net = sorted({window_start(ev.timestamp) for ev in self._network_valid_events})
+            if len(distinct_net) > max_allowed_windows:
+                cutoff_net = distinct_net[-max_allowed_windows]
+                self._network_valid_events = [ev for ev in self._network_valid_events if window_start(ev.timestamp) >= cutoff_net]
+
+        # 2. Prune workload samples by distinct window starts
+        if self._workload_valid_samples:
+            distinct_wl = sorted({window_start(s.timestamp) for s in self._workload_valid_samples})
+            if len(distinct_wl) > max_allowed_windows:
+                cutoff_wl = distinct_wl[-max_allowed_windows]
+                self._workload_valid_samples = [s for s in self._workload_valid_samples if window_start(s.timestamp) >= cutoff_wl]
+                cutoff_iso = isoformat_z(cutoff_wl)
+                self._workload_seen_lines = {k for k in self._workload_seen_lines if k.split("|")[0] >= cutoff_iso}
+
+        # 3. Prune runtime events by distinct window starts
+        if self._runtime_valid_events:
+            distinct_rt = sorted({window_start(rev.timestamp) for rev in self._runtime_valid_events})
+            if len(distinct_rt) > max_allowed_windows:
+                cutoff_rt = distinct_rt[-max_allowed_windows]
+                self._runtime_valid_events = [rev for rev in self._runtime_valid_events if window_start(rev.timestamp) >= cutoff_rt]
+
     def process_live_telemetry(self, model_name: str = "random_forest") -> list[LiveWindowRecord]:
         """Ingest new telemetry, align windows, run bounded inference, and return sorted records."""
         # 1. Ingest any newly appended records across all three streams
@@ -485,7 +561,10 @@ class LiveTelemetryEngine:
         self.read_new_workload_samples()
         self.read_new_runtime_events()
 
-        # 2. Extract window features across all accumulated events
+        # 2. Prune in-memory telemetry buffers to active observation horizon
+        self._prune_telemetry_buffers()
+
+        # 3. Extract window features across bounded active events
         net_windows = extract_network_features(self._network_valid_events) if self._network_valid_events else []
         workload_windows = extract_workload_features(self._workload_valid_samples) if self._workload_valid_samples else []
 
