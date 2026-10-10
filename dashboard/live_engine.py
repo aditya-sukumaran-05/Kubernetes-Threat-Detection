@@ -9,6 +9,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -78,6 +79,21 @@ def _check_collector_process(script_name: str, pid_filename: str) -> tuple[bool,
         pass
 
     return False, None
+
+
+def _get_file_identity(st: os.stat_result) -> tuple:
+    """Return a stable, unique file identifier for rotation detection across POSIX and Windows.
+
+    On POSIX and Windows NTFS, (st_ino, st_dev) is stable across normal appends and changes
+    only on file rotation or replacement. Note: st_ctime is NOT included on POSIX because it represents
+    inode metadata change time and updates on every append/write. On Windows, creation time is used
+    as fallback only if st_ino is 0 (e.g. non-NTFS volumes).
+    """
+    if st.st_ino != 0:
+        return (st.st_ino, getattr(st, "st_dev", 0))
+    if os.name == "nt":
+        return (0, getattr(st, "st_dev", 0), getattr(st, "st_ctime_ns", 0))
+    return (0, getattr(st, "st_dev", 0))
 
 
 @dataclass
@@ -151,7 +167,7 @@ class LiveTelemetryEngine:
 
         # Incremental file tracking
         self._network_file_offset: int = 0
-        self._network_partial_buffer: str = ""
+        self._network_partial_bytes: bytes = b""
         self._network_valid_events: list[NetworkEvent] = []
         self._network_malformed_count: int = 0
         self._network_cumulative_count: int = 0
@@ -168,7 +184,7 @@ class LiveTelemetryEngine:
         self._workload_header_bytes: bytes = b""
 
         self._runtime_file_offset: int = 0
-        self._runtime_partial_buffer: str = ""
+        self._runtime_partial_bytes: bytes = b""
         self._runtime_valid_events: list[RuntimeEvent] = []
         self._runtime_malformed_count: int = 0
         self._runtime_cumulative_count: int = 0
@@ -177,6 +193,17 @@ class LiveTelemetryEngine:
 
         # Synchronized windows registry: window_start -> LiveWindowRecord
         self.windows: dict[str, LiveWindowRecord] = {}
+
+    @property
+    def _network_partial_buffer(self) -> str:
+        return self._network_partial_bytes.decode("utf-8", errors="replace")
+
+    @_network_partial_buffer.setter
+    def _network_partial_buffer(self, val: str | bytes) -> None:
+        if isinstance(val, str):
+            self._network_partial_bytes = val.encode("utf-8")
+        else:
+            self._network_partial_bytes = val
 
     @property
     def _workload_partial_buffer(self) -> str:
@@ -188,6 +215,17 @@ class LiveTelemetryEngine:
             self._workload_partial_bytes = val.encode("utf-8")
         else:
             self._workload_partial_bytes = val
+
+    @property
+    def _runtime_partial_buffer(self) -> str:
+        return self._runtime_partial_bytes.decode("utf-8", errors="replace")
+
+    @_runtime_partial_buffer.setter
+    def _runtime_partial_buffer(self, val: str | bytes) -> None:
+        if isinstance(val, str):
+            self._runtime_partial_bytes = val.encode("utf-8")
+        else:
+            self._runtime_partial_bytes = val
 
     @property
     def _workload_seen_lines(self) -> set[str]:
@@ -221,11 +259,11 @@ class LiveTelemetryEngine:
             return []
 
         # Detect rotation or replacement (even if replacement file >= previous size)
-        current_id = (st.st_ino, getattr(st, "st_dev", 0), getattr(st, "st_ctime_ns", 0))
+        current_id = _get_file_identity(st)
         if self._network_file_id is not None and current_id != self._network_file_id:
             logger.info("Network capture file replaced or rotated. Resetting offset.")
             self._network_file_offset = 0
-            self._network_partial_buffer = ""
+            self._network_partial_bytes = b""
             self._network_header_bytes = b""
 
         self._network_file_id = current_id
@@ -233,7 +271,7 @@ class LiveTelemetryEngine:
         # Detect in-place truncation
         if st.st_size < self._network_file_offset:
             self._network_file_offset = 0
-            self._network_partial_buffer = ""
+            self._network_partial_bytes = b""
             self._network_header_bytes = b""
 
         new_events: list[NetworkEvent] = []
@@ -245,7 +283,7 @@ class LiveTelemetryEngine:
                     hdr = handle.read(len(self._network_header_bytes))
                     if hdr != self._network_header_bytes:
                         self._network_file_offset = 0
-                        self._network_partial_buffer = ""
+                        self._network_partial_bytes = b""
                         self._network_header_bytes = b""
 
                 handle.seek(self._network_file_offset)
@@ -258,14 +296,14 @@ class LiveTelemetryEngine:
         if not chunk_bytes:
             return []
 
-        combined_bytes = self._network_partial_buffer.encode("utf-8") + chunk_bytes
+        combined_bytes = self._network_partial_bytes + chunk_bytes
         last_nl = combined_bytes.rfind(b"\n")
         if last_nl == -1:
-            self._network_partial_buffer = combined_bytes.decode("utf-8", errors="replace")
+            self._network_partial_bytes = combined_bytes
             return []
 
         complete_bytes = combined_bytes[: last_nl + 1]
-        self._network_partial_buffer = combined_bytes[last_nl + 1 :].decode("utf-8", errors="replace")
+        self._network_partial_bytes = combined_bytes[last_nl + 1 :]
 
         if not self._network_header_bytes:
             first_nl = complete_bytes.find(b"\n")
@@ -305,7 +343,7 @@ class LiveTelemetryEngine:
             return []
 
         # Detect rotation or replacement (even if replacement file >= previous size)
-        current_id = (st.st_ino, getattr(st, "st_dev", 0), getattr(st, "st_ctime_ns", 0))
+        current_id = _get_file_identity(st)
         if self._workload_file_id is not None and current_id != self._workload_file_id:
             logger.info("Workload capture file replaced or rotated. Resetting offset.")
             self._workload_file_offset = 0
@@ -416,11 +454,11 @@ class LiveTelemetryEngine:
             return []
 
         # Detect rotation or replacement (even if replacement file >= previous size)
-        current_id = (st.st_ino, getattr(st, "st_dev", 0), getattr(st, "st_ctime_ns", 0))
+        current_id = _get_file_identity(st)
         if self._runtime_file_id is not None and current_id != self._runtime_file_id:
             logger.info("Runtime capture file replaced or rotated. Resetting offset.")
             self._runtime_file_offset = 0
-            self._runtime_partial_buffer = ""
+            self._runtime_partial_bytes = b""
             self._runtime_header_bytes = b""
 
         self._runtime_file_id = current_id
@@ -428,7 +466,7 @@ class LiveTelemetryEngine:
         # Detect in-place truncation
         if st.st_size < self._runtime_file_offset:
             self._runtime_file_offset = 0
-            self._runtime_partial_buffer = ""
+            self._runtime_partial_bytes = b""
             self._runtime_header_bytes = b""
 
         new_events: list[RuntimeEvent] = []
@@ -440,7 +478,7 @@ class LiveTelemetryEngine:
                     hdr = handle.read(len(self._runtime_header_bytes))
                     if hdr != self._runtime_header_bytes:
                         self._runtime_file_offset = 0
-                        self._runtime_partial_buffer = ""
+                        self._runtime_partial_bytes = b""
                         self._runtime_header_bytes = b""
 
                 handle.seek(self._runtime_file_offset)
@@ -453,14 +491,14 @@ class LiveTelemetryEngine:
         if not chunk_bytes:
             return []
 
-        combined_bytes = self._runtime_partial_buffer.encode("utf-8") + chunk_bytes
+        combined_bytes = self._runtime_partial_bytes + chunk_bytes
         last_nl = combined_bytes.rfind(b"\n")
         if last_nl == -1:
-            self._runtime_partial_buffer = combined_bytes.decode("utf-8", errors="replace")
+            self._runtime_partial_bytes = combined_bytes
             return []
 
         complete_bytes = combined_bytes[: last_nl + 1]
-        self._runtime_partial_buffer = combined_bytes[last_nl + 1 :].decode("utf-8", errors="replace")
+        self._runtime_partial_bytes = combined_bytes[last_nl + 1 :]
 
         if not self._runtime_header_bytes:
             first_nl = complete_bytes.find(b"\n")

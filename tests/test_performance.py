@@ -598,3 +598,156 @@ def test_workload_deduplication_state_bounded_and_format_agnostic(tmp_path: Path
     # Bounded retention: max 20 + 5 = 25 windows retained.
     # At 2 samples per window, _workload_seen_samples must not exceed ~55 items (not 162!)
     assert len(engine._workload_seen_samples) <= 25 * 2 + 2
+
+
+def test_multiple_append_and_poll_cycles_stable_identity_no_reset(tmp_path: Path) -> None:
+    """Verify multiple append-and-poll cycles across workload, network, and runtime never trigger false resets."""
+    wl_file = tmp_path / "workload_metrics.csv"
+    net_file = tmp_path / "network_events.jsonl"
+    rt_file = tmp_path / "runtime_events.jsonl"
+    base_ts = datetime(2026, 10, 10, 12, 0, 0, tzinfo=timezone.utc)
+
+    # Initialize files
+    with open(wl_file, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["timestamp", "pod", "cpu_millicores", "memory_mib", "label"])
+        writer.writerow([base_ts.isoformat(), "webapp", 100, 15, "normal"])
+
+    with open(net_file, "w", encoding="utf-8") as f:
+        f.write(json.dumps({
+            "timestamp": base_ts.isoformat(), "type": "accept",
+            "src": {"addr": "10.244.0.5", "port": 40000}, "dst": {"addr": "10.244.0.2", "port": 80},
+            "k8s": {"podName": "webapp", "namespace": "default"}, "error": None,
+        }) + "\n")
+
+    with open(rt_file, "w", encoding="utf-8") as f:
+        f.write(json.dumps({
+            "timestamp": base_ts.isoformat(), "comm": "nginx", "pid": 1000,
+            "uid": 1000, "username": "app", "pod": "webapp", "container": "webapp", "namespace": "default",
+        }) + "\n")
+
+    engine = LiveTelemetryEngine(network_path=net_file, workload_path=wl_file, runtime_path=rt_file)
+    assert len(engine.read_new_workload_samples()) == 1
+    assert len(engine.read_new_network_events()) == 1
+    assert len(engine.read_new_runtime_events()) == 1
+
+    # Perform 15 successive append-and-poll cycles
+    for cycle in range(1, 16):
+        ts = (base_ts + timedelta(seconds=cycle * 5)).isoformat()
+
+        with open(wl_file, "a", newline="", encoding="utf-8") as f:
+            csv.writer(f).writerow([ts, "webapp", 100 + cycle, 15, "normal"])
+
+        with open(net_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "timestamp": ts, "type": "accept",
+                "src": {"addr": "10.244.0.5", "port": 40000 + cycle}, "dst": {"addr": "10.244.0.2", "port": 80},
+                "k8s": {"podName": "webapp", "namespace": "default"}, "error": None,
+            }) + "\n")
+
+        with open(rt_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "timestamp": ts, "comm": f"proc_{cycle}", "pid": 1000 + cycle,
+                "uid": 1000, "username": "app", "pod": "webapp", "container": "webapp", "namespace": "default",
+            }) + "\n")
+
+        wl_recs = engine.read_new_workload_samples()
+        net_recs = engine.read_new_network_events()
+        rt_recs = engine.read_new_runtime_events()
+
+        # Each poll cycle must ingest EXACTLY the single newly appended record
+        assert len(wl_recs) == 1, f"Cycle {cycle}: expected 1 workload sample, got {len(wl_recs)}"
+        assert len(net_recs) == 1, f"Cycle {cycle}: expected 1 network event, got {len(net_recs)}"
+        assert len(rt_recs) == 1, f"Cycle {cycle}: expected 1 runtime event, got {len(rt_recs)}"
+
+        assert engine._workload_cumulative_count == 1 + cycle
+        assert engine._network_cumulative_count == 1 + cycle
+        assert engine._runtime_cumulative_count == 1 + cycle
+
+
+def test_network_reader_multibyte_utf8_split_across_writes(tmp_path: Path) -> None:
+    """Verify that network JSON reader handles multibyte UTF-8 characters split across writes losslessly."""
+    net_file = tmp_path / "network_events.jsonl"
+    wl_file = tmp_path / "workload_metrics.csv"
+    base_ts = datetime(2026, 10, 10, 12, 0, 0, tzinfo=timezone.utc)
+
+    # Initial event
+    with open(net_file, "wb") as f:
+        f.write((json.dumps({
+            "timestamp": base_ts.isoformat(), "type": "accept",
+            "src": {"addr": "10.244.0.5", "port": 40000}, "dst": {"addr": "10.244.0.2", "port": 80},
+            "k8s": {"podName": "webapp", "namespace": "default"}, "error": None,
+        }) + "\n").encode("utf-8"))
+
+    engine = LiveTelemetryEngine(network_path=net_file, workload_path=wl_file)
+    first_read = engine.read_new_network_events()
+    assert len(first_read) == 1
+
+    # Write 2a: split multibyte char in podName (0xc2 0xb5 -> micro sign) across write boundary
+    ts2 = (base_ts + timedelta(seconds=5)).isoformat()
+    part_1 = (
+        f'{{"timestamp":"{ts2}","type":"accept",'
+        f'"src":{{"addr":"10.244.0.5","port":40001}},"dst":{{"addr":"10.244.0.2","port":80}},'
+        f'"k8s":{{"podName":"webapp-'
+    ).encode("utf-8") + b"\xc2"  # Split right at first byte of multibyte char!
+
+    with open(net_file, "ab") as f:
+        f.write(part_1)
+
+    second_read = engine.read_new_network_events()
+    assert len(second_read) == 0  # Incomplete line, buffered in raw bytes
+
+    # Write 2b: complete multibyte char (0xb5) and close JSON line
+    part_2 = b'\xb5","namespace":"default"},"error":null}\n'
+    with open(net_file, "ab") as f:
+        f.write(part_2)
+
+    third_read = engine.read_new_network_events()
+    assert len(third_read) == 1
+    assert third_read[0].pod == "webapp-\u00b5"
+    assert "\ufffd" not in third_read[0].pod
+
+
+def test_runtime_reader_multibyte_utf8_split_across_writes(tmp_path: Path) -> None:
+    """Verify that runtime JSON reader handles multibyte UTF-8 characters split across writes losslessly."""
+    rt_file = tmp_path / "runtime_events.jsonl"
+    wl_file = tmp_path / "workload_metrics.csv"
+    net_file = tmp_path / "network_events.jsonl"
+    base_ts = datetime(2026, 10, 10, 12, 0, 0, tzinfo=timezone.utc)
+
+    # Initial event
+    with open(rt_file, "wb") as f:
+        f.write((json.dumps({
+            "timestamp": base_ts.isoformat(), "comm": "nginx", "pid": 1000,
+            "uid": 1000, "username": "app", "pod": "webapp", "container": "webapp", "namespace": "default",
+        }) + "\n").encode("utf-8"))
+
+    engine = LiveTelemetryEngine(network_path=net_file, workload_path=wl_file, runtime_path=rt_file)
+    first_read = engine.read_new_runtime_events()
+    assert len(first_read) == 1
+
+    # Write 2a: split multibyte char in comm (0xc2 0xb5) across write boundary
+    ts2 = (base_ts + timedelta(seconds=5)).isoformat()
+    part_1 = (
+        f'{{"timestamp":"{ts2}","comm":"curl-'
+    ).encode("utf-8") + b"\xc2"
+
+    with open(rt_file, "ab") as f:
+        f.write(part_1)
+
+    second_read = engine.read_new_runtime_events()
+    assert len(second_read) == 0
+
+    # Write 2b: complete multibyte char and close JSON line
+    part_2 = (
+        b'\xb5","pid":1001,"uid":1000,"username":"app",'
+        b'"pod":"webapp","container":"webapp","namespace":"default"}\n'
+    )
+    with open(rt_file, "ab") as f:
+        f.write(part_2)
+
+    third_read = engine.read_new_runtime_events()
+    assert len(third_read) == 1
+    assert third_read[0].comm == "curl-\u00b5"
+    assert "\ufffd" not in third_read[0].comm
+
