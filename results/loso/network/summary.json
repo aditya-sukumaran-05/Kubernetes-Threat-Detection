@@ -1,0 +1,102 @@
+{
+  "telemetry": "network",
+  "dataset": "results/ml_datasets/network_dataset.csv",
+  "features": [
+    "network_accept_count",
+    "network_close_count",
+    "network_connection_count",
+    "network_connection_rate",
+    "network_error_count",
+    "network_event_count",
+    "network_interarrival_max_seconds",
+    "network_interarrival_mean_seconds",
+    "network_interarrival_min_seconds",
+    "network_interarrival_std_seconds",
+    "network_unique_destination_ips",
+    "network_unique_source_ips",
+    "network_unique_source_ports"
+  ],
+  "models": [
+    {
+      "telemetry": "network",
+      "model": "random_forest",
+      "total_folds": 8,
+      "valid_folds": 8,
+      "invalid_folds": 0,
+      "total_samples": 60,
+      "aggregate_accuracy": 0.9666666666666667,
+      "aggregate_precision": 0.9642857142857143,
+      "aggregate_recall": 0.9642857142857143,
+      "aggregate_f1": 0.9642857142857143,
+      "aggregate_false_positive_rate": 0.03125,
+      "aggregate_confusion_matrix": [
+        [
+          31,
+          1
+        ],
+        [
+          1,
+          27
+        ]
+      ],
+      "mean_session_f1": 0.48214285714285715,
+      "std_session_f1": 0.5175491695067657,
+      "attack_sessions_mean_f1": 0.9642857142857143,
+      "attack_sessions_std_f1": 0.07142857142857145
+    },
+    {
+      "telemetry": "network",
+      "model": "xgboost",
+      "total_folds": 8,
+      "valid_folds": 8,
+      "invalid_folds": 0,
+      "total_samples": 60,
+      "aggregate_accuracy": 0.9166666666666666,
+      "aggregate_precision": 1.0,
+      "aggregate_recall": 0.8214285714285714,
+      "aggregate_f1": 0.9019607843137255,
+      "aggregate_false_positive_rate": 0.0,
+      "aggregate_confusion_matrix": [
+        [
+          32,
+          0
+        ],
+        [
+          5,
+          23
+        ]
+      ],
+      "mean_session_f1": 0.4403846153846154,
+      "std_session_f1": 0.4870556040678833,
+      "attack_sessions_mean_f1": 0.8807692307692307,
+      "attack_sessions_std_f1": 0.19065960456432107
+    },
+    {
+      "telemetry": "network",
+      "model": "svm",
+      "total_folds": 8,
+      "valid_folds": 8,
+      "invalid_folds": 0,
+      "total_samples": 60,
+      "aggregate_accuracy": 0.8333333333333334,
+      "aggregate_precision": 0.8461538461538461,
+      "aggregate_recall": 0.7857142857142857,
+      "aggregate_f1": 0.8148148148148148,
+      "aggregate_false_positive_rate": 0.125,
+      "aggregate_confusion_matrix": [
+        [
+          28,
+          4
+        ],
+        [
+          6,
+          22
+        ]
+      ],
+      "mean_session_f1": 0.37777777777777777,
+      "std_session_f1": 0.4661372658534007,
+      "attack_sessions_mean_f1": 0.7555555555555555,
+      "attack_sessions_std_f1": 0.35555555555555557
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+import argparse
 import subprocess
 import csv
 import time
@@ -58,58 +59,49 @@ def get_metrics(pod_name):
     return cpu, memory
 
 
-os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
-
-file_exists = os.path.exists(OUTPUT_FILE)
-
-with open(OUTPUT_FILE, "a", newline="") as file:
-    writer = csv.writer(file)
-
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Collect workload telemetry from the dynamically discovered webapp Pod.")
+    parser.add_argument("--output", default=OUTPUT_FILE)
+    parser.add_argument("--interval", type=float, default=INTERVAL)
+    args = parser.parse_args()
+    if args.interval <= 0:
+        raise ValueError("interval must be positive")
+    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+    file_exists = os.path.exists(args.output)
     if not file_exists:
-        writer.writerow([
-            "timestamp",
-            "pod",
-            "cpu_millicores",
-            "memory_mib",
-            "label"
-        ])
-
-print("Starting Kubernetes workload telemetry collector...")
-print("Automatically discovering the webapp Pod.")
-print("Press Ctrl+C to stop.\n")
-
-while True:
+        with open(args.output, "w", newline="") as file:
+            csv.writer(file).writerow(["timestamp", "pod", "cpu_millicores", "memory_mib", "label"])
+    print("Starting Kubernetes workload telemetry collector; dynamically discovering app=webapp.")
+    pid_file = os.path.join(os.path.dirname(args.output) or ".", ".workload_collector.pid")
     try:
-        pod_name = get_webapp_pod()
-        cpu, memory = get_metrics(pod_name)
+        with open(pid_file, "w", encoding="utf-8") as pf:
+            pf.write(str(os.getpid()))
+    except Exception:
+        pass
 
-        timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-
-        with open(OUTPUT_FILE, "a", newline="") as file:
-            writer = csv.writer(file)
-            writer.writerow([
-                timestamp,
-                pod_name,
-                cpu,
-                memory,
-                LABEL
-            ])
-
-        print(
-            f"[{timestamp}] "
-            f"Pod={pod_name}  "
-            f"CPU={cpu}m  "
-            f"Memory={memory}Mi"
-        )
-
-    except subprocess.CalledProcessError:
-        print("Unable to retrieve Kubernetes information. Retrying...")
-
-    except Exception as e:
-        print(f"Error: {e}")
-
+    try:
+        while True:
+            try:
+                pod_name = get_webapp_pod()
+                cpu, memory = get_metrics(pod_name)
+                timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                with open(args.output, "a", newline="") as file:
+                    csv.writer(file).writerow([timestamp, pod_name, cpu, memory, LABEL])
+                print(f"[{timestamp}] Pod={pod_name} CPU={cpu}m Memory={memory}Mi")
+            except subprocess.CalledProcessError:
+                print("Unable to retrieve Kubernetes information. Retrying...")
+            except Exception as error:
+                print(f"Error: {error}")
+            time.sleep(args.interval)
     except KeyboardInterrupt:
         print("\nCollector stopped.")
-        break
+    finally:
+        try:
+            if os.path.exists(pid_file):
+                os.remove(pid_file)
+        except Exception:
+            pass
 
-    time.sleep(INTERVAL)
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,7 @@
+Refusing collection: webapp CPU baseline is 525m, above the 100m clean-baseline limit.
+At C:\Users\adity\OneDrive\Desktop\Kubernetes Threat Detection\scripts\collect_clean_sessions.ps1:34 char:9
++         throw "Refusing collection: webapp CPU baseline is ${cpuMilli ...
++         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (Refusing collec...baseline limit.:String) [], RuntimeException
+    + FullyQualifiedErrorId : Refusing collection: webapp CPU baseline is 525m, above the 100m clean-baseline limit.
+ 

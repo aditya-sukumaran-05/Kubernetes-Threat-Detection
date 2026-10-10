@@ -1,0 +1,403 @@
+{
+  "experiments": [
+    {
+      "experiment_id": "20260919T155421Z_network_normal_024dcd0f",
+      "scenario": "network_normal",
+      "label": "normal",
+      "status": "planned",
+      "start_time_utc": null,
+      "end_time_utc": null,
+      "network_attack_start_time_utc": null,
+      "network_attack_end_time_utc": null,
+      "workload_attack_start_time_utc": null,
+      "workload_attack_end_time_utc": null,
+      "overlap_start_time_utc": null,
+      "overlap_end_time_utc": null,
+      "telemetry_available": {
+        "network": false,
+        "workload": false
+      },
+      "sample_counts": {
+        "network": 0,
+        "workload": 0
+      },
+      "validation": {},
+      "notes": "Planned by the reproducible experiment runner."
+    },
+    {
+      "experiment_id": "20260920T025021Z_network_normal_67948fa1",
+      "scenario": "network_normal",
+      "label": "normal",
+      "status": "planned",
+      "start_time_utc": null,
+      "end_time_utc": null,
+      "network_attack_start_time_utc": null,
+      "network_attack_end_time_utc": null,
+      "workload_attack_start_time_utc": null,
+      "workload_attack_end_time_utc": null,
+      "overlap_start_time_utc": null,
+      "overlap_end_time_utc": null,
+      "telemetry_available": {
+        "network": false,
+        "workload": false
+      },
+      "sample_counts": {
+        "network": 0,
+        "workload": 0
+      },
+      "validation": {},
+      "notes": "Planned by the reproducible experiment runner."
+    },
+    {
+      "experiment_id": "20260920T025103Z_network_normal_1fb67b8b",
+      "scenario": "network_normal",
+      "label": "normal",
+      "status": "running",
+      "start_time_utc": "2026-09-20T02:51:03.271Z",
+      "end_time_utc": null,
+      "network_attack_start_time_utc": null,
+      "network_attack_end_time_utc": null,
+      "workload_attack_start_time_utc": null,
+      "workload_attack_end_time_utc": null,
+      "overlap_start_time_utc": null,
+      "overlap_end_time_utc": null,
+      "telemetry_available": {
+        "network": false,
+        "workload": true
+      },
+      "sample_counts": {
+        "network": 0,
+        "workload": 1
+      },
+      "validation": {
+        "valid": false,
+        "errors": [
+          "missing experiment_end_time_utc",
+          "missing or empty network capture"
+        ]
+      },
+      "notes": "Planned by the reproducible experiment runner."
+    },
+    {
+      "experiment_id": "20260920T030836Z_network_normal_208b87ed",
+      "scenario": "network_normal",
+      "label": "normal",
+      "status": "completed",
+      "start_time_utc": "2026-09-20T03:08:36.139Z",
+      "end_time_utc": "2026-09-20T03:09:18.288Z",
+      "network_attack_start_time_utc": null,
+      "network_attack_end_time_utc": null,
+      "workload_attack_start_time_utc": null,
+      "workload_attack_end_time_utc": null,
+      "overlap_start_time_utc": null,
+      "overlap_end_time_utc": null,
+      "telemetry_available": {
+        "network": false,
+        "workload": true
+      },
+      "sample_counts": {
+        "network": 0,
+        "workload": 9
+      },
+      "validation": {
+        "valid": false,
+        "errors": [
+          "missing or empty network capture"
+        ]
+      },
+      "notes": "Planned by the reproducible experiment runner."
+    },
+    {
+      "experiment_id": "20260920T031302Z_network_normal_74327046",
+      "scenario": "network_normal",
+      "label": "normal",
+      "status": "validated",
+      "start_time_utc": "2026-09-20T03:13:02.757Z",
+      "end_time_utc": "2026-09-20T03:14:45.201Z",
+      "network_attack_start_time_utc": null,
+      "network_attack_end_time_utc": null,
+      "workload_attack_start_time_utc": null,
+      "workload_attack_end_time_utc": null,
+      "overlap_start_time_utc": null,
+      "overlap_end_time_utc": null,
+      "telemetry_available": {
+        "network": true,
+        "workload": true
+      },
+      "sample_counts": {
+        "network": 60,
+        "workload": 20
+      },
+      "validation": {
+        "valid": true,
+        "errors": []
+      },
+      "notes": "Planned by the reproducible experiment runner."
+    },
+    {
+      "experiment_id": "20260920T040114Z_network_normal_715f807c",
+      "scenario": "network_normal",
+      "label": "normal",
+      "status": "validated",
+      "start_time_utc": "2026-09-20T04:01:15.002Z",
+      "end_time_utc": "2026-09-20T04:02:57.417Z",
+      "network_attack_start_time_utc": null,
+      "network_attack_end_time_utc": null,
+      "workload_attack_start_time_utc": null,
+      "workload_attack_end_time_utc": null,
+      "overlap_start_time_utc": null,
+      "overlap_end_time_utc": null,
+      "telemetry_available": {
+        "network": true,
+        "workload": true
+      },
+      "sample_counts": {
+        "network": 60,
+        "workload": 20
+      },
+      "validation": {
+        "valid": true,
+        "errors": []
+      },
+      "notes": "Planned by the reproducible experiment runner."
+    },
+    {
+      "experiment_id": "20260920T041618Z_network_attack_0d549fc0",
+      "scenario": "network_attack",
+      "label": "attack",
+      "status": "validated",
+      "start_time_utc": "2026-09-20T04:16:18.784Z",
+      "end_time_utc": "2026-09-20T04:18:10.111Z",
+      "network_attack_start_time_utc": "2026-09-20T04:16:40.806Z",
+      "network_attack_end_time_utc": "2026-09-20T04:17:50.109Z",
+      "workload_attack_start_time_utc": null,
+      "workload_attack_end_time_utc": null,
+      "overlap_start_time_utc": null,
+      "overlap_end_time_utc": null,
+      "telemetry_available": {
+        "network": true,
+        "workload": true
+      },
+      "sample_counts": {
+        "network": 4916,
+        "workload": 21
+      },
+      "validation": {
+        "valid": true,
+        "errors": [],
+        "attack_window_report": {
+          "network_attack": {
+            "start_time_utc": "2026-09-20T04:16:40.806Z",
+            "end_time_utc": "2026-09-20T04:17:50.109Z",
+            "duration_seconds": 69.303,
+            "complete_10_second_windows": 6
+          },
+          "workload_attack": {
+            "start_time_utc": null,
+            "end_time_utc": null,
+            "duration_seconds": null,
+            "complete_10_second_windows": 0
+          },
+          "fusion_overlap": {
+            "start_time_utc": null,
+            "end_time_utc": null,
+            "duration_seconds": null,
+            "complete_10_second_windows": 0
+          }
+        }
+      },
+      "notes": "Planned by the reproducible experiment runner."
+    },
+    {
+      "experiment_id": "20260920T042241Z_fusion_attack_586a0cc6",
+      "scenario": "fusion_attack",
+      "label": "attack",
+      "status": "validated",
+      "start_time_utc": "2026-09-20T04:22:41.843Z",
+      "end_time_utc": "2026-09-20T04:24:34.175Z",
+      "network_attack_start_time_utc": "2026-09-20T04:23:03.869Z",
+      "network_attack_end_time_utc": "2026-09-20T04:24:14.174Z",
+      "workload_attack_start_time_utc": "2026-09-20T04:23:03.869Z",
+      "workload_attack_end_time_utc": "2026-09-20T04:24:13.924Z",
+      "overlap_start_time_utc": "2026-09-20T04:23:03.869Z",
+      "overlap_end_time_utc": "2026-09-20T04:24:13.924Z",
+      "telemetry_available": {
+        "network": true,
+        "workload": true
+      },
+      "sample_counts": {
+        "network": 4778,
+        "workload": 21
+      },
+      "validation": {
+        "valid": true,
+        "errors": [],
+        "attack_window_report": {
+          "network_attack": {
+            "start_time_utc": "2026-09-20T04:23:03.869Z",
+            "end_time_utc": "2026-09-20T04:24:14.174Z",
+            "duration_seconds": 70.305,
+            "complete_10_second_windows": 6
+          },
+          "workload_attack": {
+            "start_time_utc": "2026-09-20T04:23:03.869Z",
+            "end_time_utc": "2026-09-20T04:24:13.924Z",
+            "duration_seconds": 70.055,
+            "complete_10_second_windows": 6
+          },
+          "fusion_overlap": {
+            "start_time_utc": "2026-09-20T04:23:03.869Z",
+            "end_time_utc": "2026-09-20T04:24:13.924Z",
+            "duration_seconds": 70.055,
+            "complete_10_second_windows": 6
+          }
+        }
+      },
+      "notes": "Planned by the reproducible experiment runner."
+    },
+    {
+      "experiment_id": "20260920T045231Z_workload_attack_9dbe493e",
+      "scenario": "workload_attack",
+      "label": "attack",
+      "status": "completed",
+      "start_time_utc": "2026-09-20T04:52:31.639Z",
+      "end_time_utc": "2026-09-20T04:54:23.691Z",
+      "network_attack_start_time_utc": null,
+      "network_attack_end_time_utc": null,
+      "workload_attack_start_time_utc": "2026-09-20T04:52:53.667Z",
+      "workload_attack_end_time_utc": "2026-09-20T04:54:03.690Z",
+      "overlap_start_time_utc": null,
+      "overlap_end_time_utc": null,
+      "telemetry_available": {
+        "network": false,
+        "workload": true
+      },
+      "sample_counts": {
+        "network": 0,
+        "workload": 21
+      },
+      "validation": {
+        "valid": false,
+        "errors": [
+          "missing or empty network capture"
+        ],
+        "attack_window_report": {
+          "network_attack": {
+            "start_time_utc": null,
+            "end_time_utc": null,
+            "duration_seconds": null,
+            "complete_10_second_windows": 0
+          },
+          "workload_attack": {
+            "start_time_utc": "2026-09-20T04:52:53.667Z",
+            "end_time_utc": "2026-09-20T04:54:03.690Z",
+            "duration_seconds": 70.023,
+            "complete_10_second_windows": 6
+          },
+          "fusion_overlap": {
+            "start_time_utc": null,
+            "end_time_utc": null,
+            "duration_seconds": null,
+            "complete_10_second_windows": 0
+          }
+        }
+      },
+      "notes": "Planned by the reproducible experiment runner."
+    },
+    {
+      "experiment_id": "20260920T050524Z_workload_attack_a1b04181",
+      "scenario": "workload_attack",
+      "label": "attack",
+      "status": "validated",
+      "start_time_utc": "2026-09-20T05:05:25.066Z",
+      "end_time_utc": "2026-09-20T05:07:17.149Z",
+      "network_attack_start_time_utc": null,
+      "network_attack_end_time_utc": null,
+      "workload_attack_start_time_utc": "2026-09-20T05:05:47.098Z",
+      "workload_attack_end_time_utc": "2026-09-20T05:06:57.148Z",
+      "overlap_start_time_utc": null,
+      "overlap_end_time_utc": null,
+      "telemetry_available": {
+        "network": true,
+        "workload": true
+      },
+      "sample_counts": {
+        "network": 60,
+        "workload": 21
+      },
+      "validation": {
+        "valid": true,
+        "errors": [],
+        "attack_window_report": {
+          "network_attack": {
+            "start_time_utc": null,
+            "end_time_utc": null,
+            "duration_seconds": null,
+            "complete_10_second_windows": 0
+          },
+          "workload_attack": {
+            "start_time_utc": "2026-09-20T05:05:47.098Z",
+            "end_time_utc": "2026-09-20T05:06:57.148Z",
+            "duration_seconds": 70.05,
+            "complete_10_second_windows": 6
+          },
+          "fusion_overlap": {
+            "start_time_utc": null,
+            "end_time_utc": null,
+            "duration_seconds": null,
+            "complete_10_second_windows": 0
+          }
+        }
+      },
+      "notes": "Planned by the reproducible experiment runner."
+    },
+    {
+      "experiment_id": "20260920T051617Z_workload_normal_b0bf4f80",
+      "scenario": "workload_normal",
+      "label": "normal",
+      "status": "validated",
+      "start_time_utc": "2026-09-20T05:16:17.200Z",
+      "end_time_utc": "2026-09-20T05:18:01.764Z",
+      "network_attack_start_time_utc": null,
+      "network_attack_end_time_utc": null,
+      "workload_attack_start_time_utc": null,
+      "workload_attack_end_time_utc": null,
+      "overlap_start_time_utc": null,
+      "overlap_end_time_utc": null,
+      "telemetry_available": {
+        "network": true,
+        "workload": true
+      },
+      "sample_counts": {
+        "network": 60,
+        "workload": 20
+      },
+      "validation": {
+        "valid": true,
+        "errors": [],
+        "attack_window_report": {
+          "network_attack": {
+            "start_time_utc": null,
+            "end_time_utc": null,
+            "duration_seconds": null,
+            "complete_10_second_windows": 0
+          },
+          "workload_attack": {
+            "start_time_utc": null,
+            "end_time_utc": null,
+            "duration_seconds": null,
+            "complete_10_second_windows": 0
+          },
+          "fusion_overlap": {
+            "start_time_utc": null,
+            "end_time_utc": null,
+            "duration_seconds": null,
+            "complete_10_second_windows": 0
+          }
+        }
+      },
+      "notes": "Planned by the reproducible experiment runner."
+    }
+  ],
+  "count": 11
+}

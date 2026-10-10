@@ -1,0 +1,10 @@
+timestamp,pod,cpu_millicores,memory_mib,label
+2026-09-20T03:08:36.497Z,webapp-79699899c5-wds9h,1,13,normal
+2026-09-20T03:08:41.733Z,webapp-79699899c5-wds9h,1,13,normal
+2026-09-20T03:08:46.947Z,webapp-79699899c5-wds9h,1,13,normal
+2026-09-20T03:08:52.205Z,webapp-79699899c5-wds9h,1,13,normal
+2026-09-20T03:08:57.419Z,webapp-79699899c5-wds9h,1,13,normal
+2026-09-20T03:09:02.691Z,webapp-79699899c5-wds9h,1,13,normal
+2026-09-20T03:09:07.883Z,webapp-79699899c5-wds9h,0,13,normal
+2026-09-20T03:09:13.084Z,webapp-79699899c5-wds9h,0,13,normal
+2026-09-20T03:09:18.289Z,webapp-79699899c5-wds9h,0,13,normal

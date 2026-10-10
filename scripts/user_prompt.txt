@@ -1,0 +1,137 @@
+<USER_REQUEST>
+We need to create the Review-2 report for the Kubernetes Threat Detection project.
+
+IMPORTANT:
+This is NOT a new research/design task. The implementation and experiments already exist.
+Your job is to assemble a polished academic Review-2 document based on the existing project, the previous Review-1 document, and the verified results below.
+
+PROJECT:
+Machine Learning-Based Threat Detection Framework for Kubernetes Environments
+
+Student:
+22MIS0050 - Aditya Sukumaran
+
+Guide:
+Gunasekaran G
+Assistant Professor Sr.
+
+Course:
+SWE3004 - Software Design and Development Project
+
+Review:
+Review - 2
+
+Date:
+07.10.2026
+
+==================================================
+PRIMARY OBJECTIVE
+==================================================
+
+Create:
+
+SWE3004_Review_2_Kubernetes_Threat_Detection.docx
+
+The document must visually follow the formatting and academic style of the previous Review-1 report.
+
+DO NOT make it look like a generic AI-generated report.
+
+Preserve:
+- VIT-style cover page
+- Times New Roman academic formatting
+- section numbering
+- heading hierarchy
+- page layout
+- figure captions
+- table style
+- footer/page numbering
+- academic tone
+- reference formatting
+
+Use the previous Review-1 DOCX as the formatting/template reference if it is available in the workspace.
+
+The previous report is important because it established the visual identity of the project.
+
+==================================================
+IMPORTANT CONTENT RULE
+==================================================
+
+Review-1 described a proposed three-plane system involving:
+- network telemetry
+- workload/resource telemetry
+- runtime/control-plane telemetry
+
+The IMPLEMENTED core system is now:
+
+NETWORK + WORKLOAD/RESOURCE
+
+Runtime/control-plane telemetry was NOT completed as part of the validated primary experiment.
+
+Therefore:
+
+DO NOT present runtime/control-plane telemetry as an implemented experimental result.
+
+It may be mentioned as:
+- future work
+- extension scop
+<truncated 11753 bytes>
+
+Do not invent new literature.
+
+If you add newer papers, verify them before adding them.
+
+==================================================
+WRITING STYLE
+==================================================
+
+Academic but readable.
+
+Avoid:
+- marketing language
+- "revolutionary"
+- "state-of-the-art" unless actually supported
+- unsupported novelty claims
+- "100% accurate"
+- "real-time" unless discussing the dashboard architecture rather than measured latency
+- causal claims from feature importance
+
+Use precise language:
+- "under the controlled experimental conditions"
+- "in the evaluated sessions"
+- "the results indicate"
+- "the current implementation"
+- "the validated primary pipeline"
+
+==================================================
+FINAL QUALITY CHECK
+==================================================
+
+Before finishing:
+
+1. Open/inspect the previous Review-1 DOCX.
+2. Match its formatting as closely as practical.
+3. Generate the improved diagrams.
+4. Insert all diagrams with captions.
+5. Insert relevant dashboard screenshots.
+6. Ensure no diagram contains tiny unreadable text.
+7. Ensure all tables fit the page width.
+8. Ensure figures do not get cut across pages.
+9. Ensure page numbers work.
+10. Ensure references are readable.
+11. Ensure Review-2 and date are correct.
+12. Ensure no old Review-1 wording remains where it contradicts the implemented system.
+13. Ensure runtime/control-plane telemetry is clearly marked as future/extension, not implemented.
+14. Ensure the Morsli et al. fusion result is acknowledged.
+15. Ensure the report does not claim fusion universally outperforms single-source models.
+16. Ensure all numerical ML results exactly match the values provided above.
+
+Finally:
+- save the completed DOCX
+- report the output filename
+- report approximate page count
+- report which diagrams were created
+- report any remaining formatting issues
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-10-05T12:09:47+05:30.
+</ADDITIONAL_METADATA>

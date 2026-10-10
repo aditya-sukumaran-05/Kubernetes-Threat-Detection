@@ -1,0 +1,43 @@
+{
+  "experiment_id": "20260920T031302Z_network_normal_74327046",
+  "scenario": "network_normal",
+  "label": "normal",
+  "namespace": "default",
+  "target_workload": "deployment/webapp",
+  "collector_config": {
+    "network_gadget_version": "v0.55.1",
+    "workload_interval_seconds": 5
+  },
+  "network_activity": "low-rate HTTP requests",
+  "workload_activity": "baseline",
+  "notes": "Planned by the reproducible experiment runner.",
+  "status": "validated",
+  "experiment_start_time_utc": "2026-09-20T03:13:02.757Z",
+  "experiment_end_time_utc": "2026-09-20T03:14:45.201Z",
+  "attack_start_time_utc": null,
+  "attack_end_time_utc": null,
+  "network_attack_start_time_utc": null,
+  "network_attack_end_time_utc": null,
+  "workload_attack_start_time_utc": null,
+  "workload_attack_end_time_utc": null,
+  "overlap_start_time_utc": null,
+  "overlap_end_time_utc": null,
+  "telemetry": {
+    "network": "network.jsonl",
+    "workload": "workload.csv"
+  },
+  "events": [
+    {
+      "timestamp_utc": "2026-09-20T03:13:24.799Z",
+      "event": "normal traffic started"
+    },
+    {
+      "timestamp_utc": "2026-09-20T03:14:45.201Z",
+      "event": "experiment capture ended"
+    }
+  ],
+  "validation": {
+    "valid": true,
+    "errors": []
+  }
+}

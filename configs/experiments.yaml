@@ -1,0 +1,64 @@
+cluster:
+  expected_context: minikube
+  namespace: default
+  target_label: app=webapp
+  target_workload: deployment/webapp
+output_directory: experiments/runs
+collectors:
+  network_gadget_version: v0.55.1
+  workload_interval_seconds: 5
+scenarios:
+  network_normal:
+    label: normal
+    warmup_seconds: 20
+    activity_seconds: 60
+    cooldown_seconds: 20
+    network_activity: low-rate HTTP requests
+    workload_activity: baseline
+    network_requests: 30
+    request_delay_seconds: 2
+  network_attack:
+    label: attack
+    warmup_seconds: 20
+    attack_seconds: 70
+    cooldown_seconds: 20
+    network_activity: controlled high-rate HTTP connection burst
+    workload_activity: baseline
+    network_requests: 120
+    network_duration_seconds: 70
+  workload_normal:
+    label: normal
+    warmup_seconds: 20
+    activity_seconds: 60
+    cooldown_seconds: 20
+    network_activity: low-rate HTTP requests
+    workload_activity: baseline
+    network_requests: 30
+    request_delay_seconds: 2
+  workload_attack:
+    label: attack
+    warmup_seconds: 20
+    attack_seconds: 70
+    cooldown_seconds: 20
+    network_activity: low-rate HTTP requests
+    workload_activity: controlled in-container CPU loop
+    network_requests: 30
+    request_delay_seconds: 2
+  fusion_normal:
+    label: normal
+    warmup_seconds: 20
+    activity_seconds: 60
+    cooldown_seconds: 20
+    network_activity: low-rate HTTP requests
+    workload_activity: baseline
+    network_requests: 30
+    request_delay_seconds: 2
+  fusion_attack:
+    label: attack
+    warmup_seconds: 20
+    attack_seconds: 70
+    cooldown_seconds: 20
+    network_activity: controlled high-rate HTTP connection burst
+    workload_activity: controlled in-container CPU loop
+    network_requests: 120
+    network_duration_seconds: 70

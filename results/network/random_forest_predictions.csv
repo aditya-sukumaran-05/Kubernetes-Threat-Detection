@@ -1,0 +1,9 @@
+actual_label,attack_probability,predicted_label,session_id,window_start
+normal,0.095,normal,20260920T094543Z_network_attack_ee01bf17,2026-09-20T09:46:00.000Z
+attack,0.995,attack,20260920T094543Z_network_attack_ee01bf17,2026-09-20T09:46:10.000Z
+attack,1.0,attack,20260920T094543Z_network_attack_ee01bf17,2026-09-20T09:46:20.000Z
+attack,1.0,attack,20260920T094543Z_network_attack_ee01bf17,2026-09-20T09:46:30.000Z
+attack,1.0,attack,20260920T094543Z_network_attack_ee01bf17,2026-09-20T09:46:40.000Z
+attack,0.995,attack,20260920T094543Z_network_attack_ee01bf17,2026-09-20T09:46:50.000Z
+attack,0.985,attack,20260920T094543Z_network_attack_ee01bf17,2026-09-20T09:47:00.000Z
+attack,0.995,attack,20260920T094543Z_network_attack_ee01bf17,2026-09-20T09:47:10.000Z

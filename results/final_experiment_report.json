@@ -1,0 +1,231 @@
+{
+  "dataset_summary": {
+    "network": {
+      "name": "network",
+      "path": "C:\\Users\\adity\\OneDrive\\Desktop\\Kubernetes Threat Detection\\results\\ml_datasets\\network_dataset.csv",
+      "rows": 17,
+      "labeled_rows": 17,
+      "class_counts": {
+        "attack": 3,
+        "normal": 14
+      },
+      "session_counts": {
+        "network_burst_20260919": 3,
+        "network_normal_20260919": 14
+      },
+      "features": [
+        "network_accept_count",
+        "network_close_count",
+        "network_connection_count",
+        "network_connection_rate",
+        "network_error_count",
+        "network_event_count",
+        "network_interarrival_max_seconds",
+        "network_interarrival_mean_seconds",
+        "network_interarrival_min_seconds",
+        "network_interarrival_std_seconds",
+        "network_unique_destination_ips",
+        "network_unique_destination_ports",
+        "network_unique_source_ips",
+        "network_unique_source_ports"
+      ],
+      "sha256": "34151662a91621474e9cdca9d8365575a842bb0b26b16cd74475c30cc8035746",
+      "limitation": null
+    },
+    "workload": {
+      "name": "workload",
+      "path": "C:\\Users\\adity\\OneDrive\\Desktop\\Kubernetes Threat Detection\\results\\ml_datasets\\workload_dataset.csv",
+      "rows": 181,
+      "labeled_rows": 97,
+      "class_counts": {
+        "normal": 97
+      },
+      "session_counts": {
+        "workload_normal_20260919": 97
+      },
+      "features": [
+        "workload_cpu_millicores_delta",
+        "workload_cpu_millicores_last",
+        "workload_cpu_millicores_max",
+        "workload_cpu_millicores_mean",
+        "workload_cpu_millicores_min",
+        "workload_memory_mib_delta",
+        "workload_memory_mib_last",
+        "workload_memory_mib_max",
+        "workload_memory_mib_mean",
+        "workload_memory_mib_min",
+        "workload_sample_count"
+      ],
+      "sha256": "a9c0ba36247fe2b42152f4c9e9f41afdcd2021c26248277f782aee7235da7c1e",
+      "limitation": "The CPU-abuse capture has no explicit metadata interval, so its 84 windows are excluded as unknown."
+    },
+    "fusion": {
+      "name": "fusion",
+      "path": "C:\\Users\\adity\\OneDrive\\Desktop\\Kubernetes Threat Detection\\results\\ml_datasets\\fusion_dataset.csv",
+      "rows": 0,
+      "labeled_rows": 0,
+      "class_counts": {},
+      "session_counts": {},
+      "features": [],
+      "sha256": "b0ef05cba1f50b50ec6154641b888024a75d269c8e7a055346c94a64141fde5f",
+      "limitation": "No same-session, temporally aligned network and workload capture is currently available."
+    }
+  },
+  "experiment_inventory": [
+    {
+      "experiment_id": "20260919T155421Z_network_normal_024dcd0f",
+      "scenario": "network_normal",
+      "label": "normal",
+      "status": "planned",
+      "start_time_utc": null,
+      "end_time_utc": null,
+      "network_attack_start_time_utc": null,
+      "network_attack_end_time_utc": null,
+      "workload_attack_start_time_utc": null,
+      "workload_attack_end_time_utc": null,
+      "overlap_start_time_utc": null,
+      "overlap_end_time_utc": null,
+      "telemetry_available": {
+        "network": false,
+        "workload": false
+      },
+      "sample_counts": {
+        "network": 0,
+        "workload": 0
+      },
+      "validation": {},
+      "notes": "Planned by the reproducible experiment runner."
+    }
+  ],
+  "data_quality": {
+    "experiment_count": 1,
+    "valid_experiment_count": 0,
+    "processed_window_count": 198,
+    "normal_windows": 111,
+    "attack_windows": 3,
+    "unknown_windows": 84,
+    "duplicate_experiment_ids": [],
+    "overlapping_valid_sessions": [],
+    "duplicate_processed_records": 0,
+    "feature_missingness": {
+      "network_accept_count": 181,
+      "network_close_count": 181,
+      "network_connection_count": 181,
+      "network_connection_rate": 181,
+      "network_error_count": 181,
+      "network_event_count": 181,
+      "network_interarrival_max_seconds": 181,
+      "network_interarrival_mean_seconds": 181,
+      "network_interarrival_min_seconds": 181,
+      "network_interarrival_std_seconds": 181,
+      "network_unique_destination_ips": 181,
+      "network_unique_destination_ports": 181,
+      "network_unique_source_ips": 181,
+      "network_unique_source_ports": 181,
+      "workload_cpu_millicores_delta": 17,
+      "workload_cpu_millicores_last": 17,
+      "workload_cpu_millicores_max": 17,
+      "workload_cpu_millicores_mean": 17,
+      "workload_cpu_millicores_min": 17,
+      "workload_memory_mib_delta": 17,
+      "workload_memory_mib_last": 17,
+      "workload_memory_mib_max": 17,
+      "workload_memory_mib_mean": 17,
+      "workload_memory_mib_min": 17,
+      "workload_sample_count": 17
+    },
+    "class_distribution": {
+      "attack": 3,
+      "normal": 111,
+      "unknown": 84
+    },
+    "per_experiment_sample_counts": {
+      "network_burst_20260919": 3,
+      "network_normal_20260919": 14,
+      "workload_attack_20260919": 84,
+      "workload_normal_20260919": 97
+    },
+    "missing_telemetry_experiments": [
+      "20260919T155421Z_network_normal_024dcd0f"
+    ],
+    "unmatched_fusion_windows": 0,
+    "data_hashes": {
+      "C:\\Users\\adity\\OneDrive\\Desktop\\Kubernetes Threat Detection\\results\\phase1_demo\\processed\\network_burst_20260919.csv": "85bf49c685edcebfb5c49dcafaf7576b4c87f302751f551317d9b9dbb72f2484",
+      "C:\\Users\\adity\\OneDrive\\Desktop\\Kubernetes Threat Detection\\results\\phase1_demo\\processed\\network_normal_20260919.csv": "4b36bd7773e3804a0845691044a9e074a28b92203305030ff389d801cb6447df",
+      "C:\\Users\\adity\\OneDrive\\Desktop\\Kubernetes Threat Detection\\results\\phase1_demo\\processed\\workload_attack_20260919.csv": "f00fceff7685b844a80a93fd9265dfae7843c27e4423bb396da353643b2ba369",
+      "C:\\Users\\adity\\OneDrive\\Desktop\\Kubernetes Threat Detection\\results\\phase1_demo\\processed\\workload_normal_20260919.csv": "c9503efda397ccea5732d9ccf5ebb8c39ea4e6eb3f7812d78e0ad6d6fcc6944a"
+    }
+  },
+  "split_strategy": "session_holdout_per_class",
+  "models": [
+    "logistic_regression",
+    "random_forest"
+  ],
+  "experiments": [
+    {
+      "telemetry": "network",
+      "model": "logistic_regression",
+      "status": "not_evaluable",
+      "reason": "need at least two independent sessions per class; available={'attack': ['network_burst_20260919'], 'normal': ['network_normal_20260919']}",
+      "split_strategy": "session_holdout_per_class",
+      "training_samples": 0,
+      "test_samples": 0
+    },
+    {
+      "telemetry": "network",
+      "model": "random_forest",
+      "status": "not_evaluable",
+      "reason": "need at least two independent sessions per class; available={'attack': ['network_burst_20260919'], 'normal': ['network_normal_20260919']}",
+      "split_strategy": "session_holdout_per_class",
+      "training_samples": 0,
+      "test_samples": 0
+    },
+    {
+      "telemetry": "workload",
+      "model": "logistic_regression",
+      "status": "not_evaluable",
+      "reason": "supervised evaluation requires both classes; missing ['attack']",
+      "split_strategy": "session_holdout_per_class",
+      "training_samples": 0,
+      "test_samples": 0
+    },
+    {
+      "telemetry": "workload",
+      "model": "random_forest",
+      "status": "not_evaluable",
+      "reason": "supervised evaluation requires both classes; missing ['attack']",
+      "split_strategy": "session_holdout_per_class",
+      "training_samples": 0,
+      "test_samples": 0
+    },
+    {
+      "telemetry": "fusion",
+      "model": "logistic_regression",
+      "status": "not_evaluable",
+      "reason": "dataset contains zero labeled samples",
+      "split_strategy": "session_holdout_per_class",
+      "training_samples": 0,
+      "test_samples": 0
+    },
+    {
+      "telemetry": "fusion",
+      "model": "random_forest",
+      "status": "not_evaluable",
+      "reason": "dataset contains zero labeled samples",
+      "split_strategy": "session_holdout_per_class",
+      "training_samples": 0,
+      "test_samples": 0
+    }
+  ],
+  "feature_importance": [],
+  "figures": [],
+  "detection_latency": "Unavailable without a valid held-out evaluated attack prediction.",
+  "monitoring_overhead": "Unavailable: no paired telemetry-disabled/telemetry-enabled resource measurements have been collected.",
+  "limitations": [
+    "Only planned experiment runs currently exist.",
+    "No valid simultaneous fusion capture has been collected."
+  ],
+  "reproducibility": {
+    "command": "python -m ml.run_experiments --project-root ."
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "experiment_id": "20260920T083158Z_network_attack_ab88fc31",
+  "scenario": "network_attack",
+  "label": "attack",
+  "namespace": "default",
+  "target_workload": "deployment/webapp",
+  "collector_config": {
+    "network_gadget_version": "v0.55.1",
+    "workload_interval_seconds": 5
+  },
+  "network_activity": "controlled high-rate HTTP connection burst",
+  "workload_activity": "baseline",
+  "notes": "Planned by the reproducible experiment runner.",
+  "status": "validated",
+  "experiment_start_time_utc": "2026-09-20T08:31:58.385Z",
+  "experiment_end_time_utc": "2026-09-20T08:33:51.128Z",
+  "attack_start_time_utc": "2026-09-20T08:32:20.431Z",
+  "attack_end_time_utc": "2026-09-20T08:33:31.127Z",
+  "network_attack_start_time_utc": "2026-09-20T08:32:20.431Z",
+  "network_attack_end_time_utc": "2026-09-20T08:33:31.127Z",
+  "workload_attack_start_time_utc": null,
+  "workload_attack_end_time_utc": null,
+  "overlap_start_time_utc": null,
+  "overlap_end_time_utc": null,
+  "telemetry": {
+    "network": "network.jsonl",
+    "workload": "workload.csv"
+  },
+  "events": [
+    {
+      "timestamp_utc": "2026-09-20T08:32:20.431Z",
+      "event": "network burst started"
+    },
+    {
+      "timestamp_utc": "2026-09-20T08:33:31.127Z",
+      "event": "network burst ended"
+    },
+    {
+      "timestamp_utc": "2026-09-20T08:33:51.128Z",
+      "event": "experiment capture ended"
+    }
+  ],
+  "validation": {
+    "valid": true,
+    "errors": [],
+    "attack_window_report": {
+      "network_attack": {
+        "start_time_utc": "2026-09-20T08:32:20.431Z",
+        "end_time_utc": "2026-09-20T08:33:31.127Z",
+        "duration_seconds": 70.696,
+        "complete_10_second_windows": 6
+      },
+      "workload_attack": {
+        "start_time_utc": null,
+        "end_time_utc": null,
+        "duration_seconds": null,
+        "complete_10_second_windows": 0
+      },
+      "fusion_overlap": {
+        "start_time_utc": null,
+        "end_time_utc": null,
+        "duration_seconds": null,
+        "complete_10_second_windows": 0
+      }
+    }
+  }
+}

@@ -1,0 +1,3 @@
+Starting Kubernetes network telemetry collector. Press Ctrl+C to stop.
+[Gadget] error: unknown command "gadget" for "kubectl"
+Network collector stopped.

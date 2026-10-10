@@ -1,0 +1,36 @@
+{
+  "captures": [
+    {
+      "id": "network_normal_20260919",
+      "source": "network",
+      "path": "telemetry/data/network/network_normal.jsonl",
+      "session_id": "network_normal_20260919",
+      "description": "Spaced normal HTTP traffic capture.",
+      "label_intervals": [{"start": "2026-09-19T11:59:30Z", "end": "2026-09-19T12:01:50Z", "label": "normal", "attack_type": "normal"}]
+    },
+    {
+      "id": "network_burst_20260919",
+      "source": "network",
+      "path": "telemetry/data/network/network_burst_attack.jsonl",
+      "session_id": "network_burst_20260919",
+      "description": "Controlled high-rate connection burst; destination ports are client ephemeral ports.",
+      "label_intervals": [{"start": "2026-09-19T12:58:40Z", "end": "2026-09-19T12:59:10Z", "label": "attack", "attack_type": "network_burst"}]
+    },
+    {
+      "id": "workload_normal_20260919",
+      "source": "workload",
+      "path": "telemetry/data/workload_normal.csv",
+      "session_id": "workload_normal_20260919",
+      "description": "Low-CPU, stable-memory workload baseline.",
+      "label_intervals": [{"start": "2026-09-19T11:55:40Z", "end": "2026-09-19T12:11:50Z", "label": "normal", "attack_type": "normal"}]
+    },
+    {
+      "id": "workload_attack_20260919",
+      "source": "workload",
+      "path": "telemetry/data/workload_attack.csv",
+      "session_id": "workload_attack_20260919",
+      "description": "CPU-abuse capture. No controlled attack interval was recorded; labels remain unknown pending experiment metadata.",
+      "label_intervals": []
+    }
+  ]
+}

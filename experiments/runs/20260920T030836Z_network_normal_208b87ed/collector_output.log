@@ -1,0 +1,2 @@
+error: unknown shorthand flag: 'l' in -l
+See 'kubectl exec --help' for usage.

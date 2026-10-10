@@ -1,66 +1,89 @@
+import argparse
 import subprocess
 import json
 import os
 
 OUTPUT_FILE = "telemetry/data/network/network_events.jsonl"
 
-os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
 
-command = [
-    "kubectl",
-    "gadget",
-    "run",
-    "trace_tcp:v0.55.1",
-    "-n",
-    "default",
-    "-l",
-    "app=webapp",
-    "--output",
-    "json"
-]
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Collect Inspektor Gadget TCP telemetry for app=webapp.")
+    parser.add_argument("--output", default=OUTPUT_FILE)
+    parser.add_argument("--namespace", default="default")
+    parser.add_argument("--selector", default="app=webapp")
+    parser.add_argument("--gadget-version", default="v0.55.1")
+    args = parser.parse_args()
+    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+    gadget_dir = os.path.join(os.path.expanduser("~"), "bin")
+    env = os.environ.copy()
+    env["PATH"] = gadget_dir + os.pathsep + env.get("PATH", "")
 
-print("Starting Kubernetes network telemetry collector...")
-print("Target: webapp")
-print("Press Ctrl+C to stop.\n")
-
-with open(OUTPUT_FILE, "a", encoding="utf-8") as file:
-
-    process = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1
-    )
+    command = [
+        "kubectl",
+        "gadget",
+        "run",
+        f"trace_tcp:{args.gadget_version}",
+        "-n",
+        args.namespace,
+        "-l",
+        args.selector,
+        "--output",
+        "json",
+    ]
+    print("Starting Kubernetes network telemetry collector. Press Ctrl+C to stop.")
+    pid_file = os.path.join(os.path.dirname(args.output) or ".", ".network_collector.pid")
+    try:
+        with open(pid_file, "w", encoding="utf-8") as pf:
+            pf.write(str(os.getpid()))
+    except Exception:
+        pass
 
     try:
-        for line in process.stdout:
-            line = line.strip()
+        with open(args.output, "a", encoding="utf-8") as file:
 
-            if not line:
-                continue
+            process = subprocess.Popen(
+                command,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
 
             try:
-                event = json.loads(line)
+                assert process.stdout is not None
+                for line in process.stdout:
+                    line = line.strip()
 
-                file.write(json.dumps(event) + "\n")
-                file.flush()
+                    if not line:
+                        continue
 
-                print(
-                    f"[{event.get('timestamp', '?')}] "
-                    f"{event.get('type', '?')} | "
-                    f"{event.get('src', {}).get('addr', '?')}:"
-                    f"{event.get('src', {}).get('port', '?')} -> "
-                    f"{event.get('dst', {}).get('addr', '?')}:"
-                    f"{event.get('dst', {}).get('port', '?')}"
-                )
+                    try:
+                        event = json.loads(line)
 
-            except json.JSONDecodeError:
-                print(f"[Gadget] {line}")
+                        file.write(json.dumps(event) + "\n")
+                        file.flush()
 
-    except KeyboardInterrupt:
-        print("\nStopping network collector...")
-        process.terminate()
-        process.wait()
+                        print(f"[{event.get('timestamp', '?')}] {event.get('type', '?')} | {event.get('src', {}).get('addr', '?')}:{event.get('src', {}).get('port', '?')} -> {event.get('dst', {}).get('addr', '?')}:{event.get('dst', {}).get('port', '?')}")
 
-print("Network collector stopped.")
+                    except json.JSONDecodeError:
+                        print(f"[Gadget] {line}")
+
+            except KeyboardInterrupt:
+                print("\nStopping network collector...")
+                if os.name == "nt":
+                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], capture_output=True, check=False)
+                else:
+                    process.terminate()
+                    process.wait()
+    finally:
+        try:
+            if os.path.exists(pid_file):
+                os.remove(pid_file)
+        except Exception:
+            pass
+
+    print("Network collector stopped.")
+
+if __name__ == "__main__":
+    main()

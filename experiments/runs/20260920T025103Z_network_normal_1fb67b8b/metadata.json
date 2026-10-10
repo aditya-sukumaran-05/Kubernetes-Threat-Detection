@@ -1,0 +1,46 @@
+{
+  "experiment_id": "20260920T025103Z_network_normal_1fb67b8b",
+  "scenario": "network_normal",
+  "label": "normal",
+  "namespace": "default",
+  "target_workload": "deployment/webapp",
+  "collector_config": {
+    "network_gadget_version": "v0.55.1",
+    "workload_interval_seconds": 5
+  },
+  "network_activity": "low-rate HTTP requests",
+  "workload_activity": "baseline",
+  "notes": "Planned by the reproducible experiment runner.",
+  "status": "running",
+  "experiment_start_time_utc": "2026-09-20T02:51:03.271Z",
+  "experiment_end_time_utc": null,
+  "attack_start_time_utc": null,
+  "attack_end_time_utc": null,
+  "network_attack_start_time_utc": null,
+  "network_attack_end_time_utc": null,
+  "workload_attack_start_time_utc": null,
+  "workload_attack_end_time_utc": null,
+  "overlap_start_time_utc": null,
+  "overlap_end_time_utc": null,
+  "telemetry": {
+    "network": "network.jsonl",
+    "workload": "workload.csv"
+  },
+  "events": [
+    {
+      "timestamp_utc": "2026-09-20T02:51:03.113Z",
+      "event": "run directory created"
+    },
+    {
+      "timestamp_utc": "2026-09-20T02:51:03.271Z",
+      "event": "experiment started"
+    }
+  ],
+  "validation": {
+    "valid": false,
+    "errors": [
+      "missing experiment_end_time_utc",
+      "missing or empty network capture"
+    ]
+  }
+}

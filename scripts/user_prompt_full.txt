@@ -1,0 +1,677 @@
+<USER_REQUEST>
+We need to create the Review-2 report for the Kubernetes Threat Detection project.
+
+IMPORTANT:
+This is NOT a new research/design task. The implementation and experiments already exist.
+Your job is to assemble a polished academic Review-2 document based on the existing project, the previous Review-1 document, and the verified results below.
+
+PROJECT:
+Machine Learning-Based Threat Detection Framework for Kubernetes Environments
+
+Student:
+22MIS0050 - Aditya Sukumaran
+
+Guide:
+Gunasekaran G
+Assistant Professor Sr.
+
+Course:
+SWE3004 - Software Design and Development Project
+
+Review:
+Review - 2
+
+Date:
+07.10.2026
+
+==================================================
+PRIMARY OBJECTIVE
+==================================================
+
+Create:
+
+SWE3004_Review_2_Kubernetes_Threat_Detection.docx
+
+The document must visually follow the formatting and academic style of the previous Review-1 report.
+
+DO NOT make it look like a generic AI-generated report.
+
+Preserve:
+- VIT-style cover page
+- Times New Roman academic formatting
+- section numbering
+- heading hierarchy
+- page layout
+- figure captions
+- table style
+- footer/page numbering
+- academic tone
+- reference formatting
+
+Use the previous Review-1 DOCX as the formatting/template reference if it is available in the workspace.
+
+The previous report is important because it established the visual identity of the project.
+
+==================================================
+IMPORTANT CONTENT RULE
+==================================================
+
+Review-1 described a proposed three-plane system involving:
+- network telemetry
+- workload/resource telemetry
+- runtime/control-plane telemetry
+
+The IMPLEMENTED core system is now:
+
+NETWORK + WORKLOAD/RESOURCE
+
+Runtime/control-plane telemetry was NOT completed as part of the validated primary experiment.
+
+Therefore:
+
+DO NOT present runtime/control-plane telemetry as an implemented experimental result.
+
+It may be mentioned as:
+- future work
+- extension scope
+- limitation
+
+Do not pretend that it was evaluated.
+
+==================================================
+WHAT HAS ACTUALLY BEEN IMPLEMENTED
+==================================================
+
+Kubernetes environment:
+- Minikube
+- Kubernetes
+- webapp/nginx workload
+- Metrics Server
+- Inspektor Gadget
+- eBPF TCP tracing
+- controlled traffic generation
+
+Telemetry:
+1. Network telemetry
+   - Inspektor Gadget eBPF TCP trace
+   - socket/connection-event based features
+   - 10-second aggregation windows
+
+2. Workload telemetry
+   - Metrics Server
+   - CPU and memory measurements
+   - 5-second collection
+   - 10-second feature windows
+
+3. Fusion
+   - time-aligned network + workload features
+   - common 10-second windows
+
+==================================================
+EXPERIMENTAL DESIGN
+==================================================
+
+Final primary campaign:
+
+24 clean sessions total
+
+4 sessions each for:
+- network_normal
+- network_attack
+- workload_normal
+- workload_attack
+- fusion_normal
+- fusion_attack
+
+Controlled attack conditions:
+- network attack = controlled connection-rate burst
+- workload attack = controlled CPU-abuse condition
+- fusion attack = concurrent network burst + workload abuse
+
+Do NOT describe these as arbitrary real-world attacks.
+Use precise wording such as:
+"controlled network connection-rate burst"
+and
+"controlled CPU-abuse condition."
+
+==================================================
+DATASETS
+==================================================
+
+Generated primary datasets:
+
+Network:
+- 60 total labelled windows
+- 32 normal
+- 28 attack
+- 8 sessions
+- 14 network features
+
+Workload:
+- 91 total rows
+- 83 labelled
+- 55 normal
+- 28 attack
+- 8 sessions
+- 11 workload features
+
+Fusion:
+- 276 total aligned rows
+- 122 labelled
+- 94 normal
+- 28 attack
+- 24 sessions
+- 27 fused features
+
+Boundary/unknown windows must not be described as attack or normal.
+
+==================================================
+MODEL EVALUATION
+==================================================
+
+Models:
+- Random Forest
+- XGBoost
+- SVM
+
+Evaluation:
+STRICT leave-one-session-out evaluation.
+
+Do NOT use the earlier single-session 100% results as the primary reported results.
+
+Use these pooled LOSO results:
+
+NETWORK
+
+Random Forest:
+Accuracy 0.9667
+Precision 0.9643
+Recall 0.9643
+F1 0.9643
+FPR 0.0312
+CM [[31,1],[1,27]]
+
+XGBoost:
+Accuracy 0.9167
+Precision 1.0000
+Recall 0.8214
+F1 0.9020
+FPR 0.0000
+CM [[32,0],[5,23]]
+
+SVM:
+Accuracy 0.8333
+Precision 0.8462
+Recall 0.7857
+F1 0.8148
+FPR 0.1250
+CM [[28,4],[6,22]]
+
+
+WORKLOAD
+
+Random Forest:
+Accuracy 0.7108
+Precision 0.5833
+Recall 0.5000
+F1 0.5385
+FPR 0.1818
+CM [[45,10],[14,14]]
+
+XGBoost:
+Accuracy 0.6627
+Precision 0.5000
+Recall 0.3929
+F1 0.4400
+FPR 0.2000
+CM [[44,11],[17,11]]
+
+SVM:
+Accuracy 0.7711
+Precision 0.7143
+Recall 0.5357
+F1 0.6122
+FPR 0.1091
+CM [[49,6],[13,15]]
+
+
+FUSION
+
+Random Forest:
+Accuracy 0.9672
+Precision 0.9286
+Recall 0.9286
+F1 0.9286
+FPR 0.0213
+CM [[92,2],[2,26]]
+
+XGBoost:
+Accuracy 0.9590
+Precision 0.9259
+Recall 0.8929
+F1 0.9091
+FPR 0.0213
+CM [[92,2],[3,25]]
+
+SVM:
+Accuracy 0.9590
+Precision 0.8485
+Recall 1.0000
+F1 0.9180
+FPR 0.0532
+CM [[89,5],[0,28]]
+
+==================================================
+IMPORTANT INTERPRETATION
+==================================================
+
+DO NOT claim:
+
+"Fusion always performs better."
+
+That is not supported.
+
+Correct interpretation:
+
+- Network Random Forest achieved the highest F1 among the tested configurations: 0.9643.
+- Fusion Random Forest achieved F1 = 0.9286.
+- However, fusion Random Forest had lower FPR:
+  Fusion = 0.0213
+  Network = 0.0312
+- Fusion therefore shows a useful detection-quality / false-positive trade-off under the tested conditions.
+- Workload-only detection was substantially weaker.
+- The experiment demonstrates that telemetry choice materially affects detection behavior.
+
+The research contribution must NOT be described as simply:
+"we combine network and workload telemetry."
+
+The previous literature review already identified Morsli et al. (2025), which demonstrated network + container feature fusion.
+
+Instead frame the contribution around:
+- controlled telemetry ablation
+- session-isolated evaluation
+- telemetry-choice analysis
+- false-positive trade-offs
+- evidence-aware inference
+- reproducible Kubernetes experimental pipeline
+
+==================================================
+INFERENCE ENGINE
+==================================================
+
+Implemented in:
+
+ml/inference.py
+
+Core class:
+
+ThreatDetector
+
+Capabilities:
+- network
+- workload
+- fusion
+
+Models:
+- random_forest
+- xgboost
+- svm
+
+Features:
+- canonical schema validation
+- model caching
+- existing trained pipeline loading
+- prediction
+- attack probability
+- confidence
+- window timestamps
+- affected pods
+- evidence
+- top model-derived features
+
+Result object:
+
+InferenceResult
+
+Do not claim causal explainability.
+
+The evidence view uses model-native feature importance/tree impurity weight.
+
+==================================================
+DASHBOARD
+==================================================
+
+Implemented using Streamlit.
+
+Files:
+dashboard/app.py
+dashboard/telemetry_provider.py
+dashboard/components/summary.py
+dashboard/components/evidence.py
+dashboard/components/charts.py
+dashboard/components/manual_input.py
+
+Two modes:
+
+1. Demo / Captured Data
+2. Manual Window
+
+The dashboard replays captured experimental sessions and sends windows through ThreatDetector.
+
+It is NOT a separate ML implementation.
+
+==================================================
+TESTING
+==================================================
+
+Latest full test suite:
+
+60 passed
+0 failures
+0 warnings
+
+The suite covers:
+- dashboard
+- experiment configuration
+- feature extraction
+- inference
+- metadata/alignment
+- ML
+- orchestration
+- research reporting
+- schemas
+
+Do not inflate this number or invent tests.
+
+==================================================
+REPORT STRUCTURE
+==================================================
+
+Follow the Review-1 organization and improve it where appropriate.
+
+Recommended structure:
+
+1. ABSTRACT
+2. INTRODUCTION
+3. PROBLEM STATEMENT
+4. OBJECTIVES
+5. RESEARCH QUESTIONS
+6. SCOPE OF THE PROJECT
+7. PROPOSED AND IMPLEMENTED SYSTEM
+8. LITERATURE SURVEY
+   8.1 Findings in Literature Survey
+   8.2 Research Gap and Proposed Contribution
+9. METHODOLOGY
+10. SOFTWARE REQUIREMENTS
+   10.1 Functional Requirements
+   10.2 Non-Functional Requirements
+11. SYSTEM ARCHITECTURE
+12. UML DIAGRAMS
+   12.1 Use Case Diagram
+   12.2 Class Diagram
+13. IMPLEMENTATION
+   13.1 Experimental Testbed
+   13.2 Telemetry Collection
+   13.3 Feature Engineering
+   13.4 Machine Learning
+   13.5 Inference Engine
+   13.6 Dashboard
+   13.7 Testing
+14. EVALUATION AND RESULTS
+   14.1 LOSO Evaluation
+   14.2 Comparative Results
+   14.3 Confusion Matrices
+   14.4 Discussion
+   14.5 Limitations
+15. SUMMARY
+16. REFERENCES
+
+Do not unnecessarily increase the page count just to make the document longer.
+
+Aim for approximately 16–20 pages depending on figure/table flow.
+
+==================================================
+DIAGRAM REQUIREMENTS
+==================================================
+
+This is IMPORTANT.
+
+Improve the diagrams substantially compared with Review-1.
+
+Do NOT simply reuse the old diagrams.
+
+Create clean, readable, academic diagrams with:
+- consistent fonts
+- consistent box sizes
+- clear arrows
+- meaningful relationships
+- figure captions
+- no tiny unreadable text
+- no unnecessary decorative elements
+
+Create at least these four diagrams:
+
+FIGURE 1 — IMPLEMENTED SYSTEM ARCHITECTURE
+
+Show:
+
+Kubernetes Testbed
+       |
+       +----------------------+
+       |                      |
+       v                      v
+Network Telemetry       Workload Telemetry
+Inspektor Gadget        Metrics Server
+eBPF TCP trace          CPU / memory
+       |                      |
+       +----------+-----------+
+                  |
+                  v
+       Time Alignment &
+       Feature Engineering
+                  |
+          +-------+-------+
+          |       |       |
+          v       v       v
+       Network Workload Fusion
+       Dataset Dataset Dataset
+          \       |       /
+           \      |      /
+            v     v     v
+          ML Detection Engine
+        RF / XGBoost / SVM
+                  |
+                  v
+          ThreatDetector
+                  |
+                  v
+          InferenceResult
+                  |
+                  v
+           Streamlit Dashboard
+
+Make this reflect the actual implementation.
+
+
+FIGURE 2 — DATA / ML PIPELINE
+
+Show:
+
+Clean sessions
+→ telemetry capture
+→ 10-second windowing
+→ feature extraction
+→ network/workload/fusion datasets
+→ session-level split
+→ LOSO evaluation
+→ model prediction
+→ precision/recall/F1/FPR
+
+
+FIGURE 3 — USE CASE DIAGRAM
+
+Actor:
+Security Analyst
+
+External system:
+Kubernetes Cluster
+
+Use cases:
+- Configure Detection
+- Select Telemetry Modality
+- Inspect Captured Session
+- Run Threat Detection
+- View Evidence
+- Review Detection Results
+
+Avoid fake automated response functionality.
+
+
+FIGURE 4 — IMPLEMENTED CLASS DIAGRAM
+
+This MUST be significantly better than Review-1.
+
+Represent actual implementation concepts:
+
+ThreatDetector
+InferenceResult
+TelemetryProvider
+CapturedDatasetProvider
+LiveKubernetesProvider (future extension/stub only)
+Network feature extraction
+Workload feature extraction
+Feature alignment
+Model pipeline
+
+Show relationships such as:
+ThreatDetector → InferenceResult
+ThreatDetector → feature extractors
+ThreatDetector → model pipelines
+CapturedDatasetProvider implements TelemetryProvider
+Feature alignment combines network/workload windows
+
+Do not invent generic classes like SecurityAlert if they do not exist.
+
+
+OPTIONAL FIGURE 5 — DASHBOARD DATA FLOW
+
+CapturedDatasetProvider
+        ↓
+ThreatDetector
+        ↓
+InferenceResult
+        ↓
+Summary / Evidence / Charts
+        ↓
+Streamlit Dashboard
+
+This would be useful if space permits.
+
+==================================================
+SCREENSHOTS
+==================================================
+
+Include the actual dashboard screenshots already available in the project/conversation if accessible.
+
+Prefer:
+1. Normal fusion detection screenshot
+2. Attack detection screenshot showing:
+   - ATTACK
+   - 89.5% attack probability
+   - Fusion
+   - Random Forest
+   - ground truth attack
+3. Evidence screenshot showing model-derived feature importance
+4. Telemetry charts if useful
+
+Captions must describe what the screenshot demonstrates.
+
+Do not claim screenshots are live production monitoring.
+They are captured-session replay/demo results.
+
+==================================================
+LITERATURE
+==================================================
+
+Use the previous Review-1 literature as the foundation.
+
+Keep at least 15 papers.
+
+Especially retain:
+- Almaraz-Rivera
+- Ahmed et al.
+- Aradhya et al.
+- Matsuo & Ikegami
+- Mart et al.
+- Mohite & Thangaraju
+- Zhuravchak & Dudykevych
+- German & Ponomareva
+- Zou et al.
+- Zhang et al.
+- Tunde-Onadele et al.
+- Flora et al.
+- Lu et al.
+- Morsli et al.
+- Qi et al.
+
+Morsli et al. 2025 MUST be discussed clearly because it establishes that network + container fusion is already demonstrated.
+
+Do not invent new literature.
+
+If you add newer papers, verify them before adding them.
+
+==================================================
+WRITING STYLE
+==================================================
+
+Academic but readable.
+
+Avoid:
+- marketing language
+- "revolutionary"
+- "state-of-the-art" unless actually supported
+- unsupported novelty claims
+- "100% accurate"
+- "real-time" unless discussing the dashboard architecture rather than measured latency
+- causal claims from feature importance
+
+Use precise language:
+- "under the controlled experimental conditions"
+- "in the evaluated sessions"
+- "the results indicate"
+- "the current implementation"
+- "the validated primary pipeline"
+
+==================================================
+FINAL QUALITY CHECK
+==================================================
+
+Before finishing:
+
+1. Open/inspect the previous Review-1 DOCX.
+2. Match its formatting as closely as practical.
+3. Generate the improved diagrams.
+4. Insert all diagrams with captions.
+5. Insert relevant dashboard screenshots.
+6. Ensure no diagram contains tiny unreadable text.
+7. Ensure all tables fit the page width.
+8. Ensure figures do not get cut across pages.
+9. Ensure page numbers work.
+10. Ensure references are readable.
+11. Ensure Review-2 and date are correct.
+12. Ensure no old Review-1 wording remains where it contradicts the implemented system.
+13. Ensure runtime/control-plane telemetry is clearly marked as future/extension, not implemented.
+14. Ensure the Morsli et al. fusion result is acknowledged.
+15. Ensure the report does not claim fusion universally outperforms single-source models.
+16. Ensure all numerical ML results exactly match the values provided above.
+
+Finally:
+- save the completed DOCX
+- report the output filename
+- report approximate page count
+- report which diagrams were created
+- report any remaining formatting issues
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-10-05T12:09:47+05:30.
+</ADDITIONAL_METADATA>

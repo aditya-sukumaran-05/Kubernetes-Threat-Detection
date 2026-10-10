@@ -1,0 +1,187 @@
+Collecting network_normal (1 of 1 missing sessions)...
+Preparing local lab for scenario: network_normal
+node/minikube condition met
+deployment "webapp" successfully rolled out
+deployment "metrics-server" successfully rolled out
+webapp-79699899c5-wds9h   938m   13Mi   
+Client version: v0.55.1
+Server version: v0.55.1
+pod/traffic-generator condition met
+
+## Kubernetes Threat Detection Lab
+Minikube:       OK
+Context:        OK
+Node:           Ready
+Webapp:         Ready
+Metrics Server: Ready
+Gadget:         OK
+Traffic Gen:    Running
+Lab status:     READY
+Starting Phase 3 experiment: network_normal
+{
+  "run_directory": "C:\\Users\\adity\\OneDrive\\Desktop\\Kubernetes Threat Detection\\experiments\\runs\\20260920T082959Z_network_normal_1f4bb410",
+  "status": "validated",
+  "experiment_id": "20260920T082959Z_network_normal_1f4bb410"
+}
+Experiment 'network_normal' completed successfully. See the runner result above for its run directory and validation status.
+Validated session: 20260920T082959Z_network_normal_1f4bb410
+Collecting network_attack (1 of 3 missing sessions)...
+Preparing local lab for scenario: network_attack
+node/minikube condition met
+deployment "webapp" successfully rolled out
+deployment "metrics-server" successfully rolled out
+webapp-79699899c5-wds9h   964m   13Mi   
+Client version: v0.55.1
+Server version: v0.55.1
+pod/traffic-generator condition met
+
+## Kubernetes Threat Detection Lab
+Minikube:       OK
+Context:        OK
+Node:           Ready
+Webapp:         Ready
+Metrics Server: Ready
+Gadget:         OK
+Traffic Gen:    Running
+Lab status:     READY
+Starting Phase 3 experiment: network_attack
+{
+  "run_directory": "C:\\Users\\adity\\OneDrive\\Desktop\\Kubernetes Threat Detection\\experiments\\runs\\20260920T083158Z_network_attack_ab88fc31",
+  "status": "validated",
+  "experiment_id": "20260920T083158Z_network_attack_ab88fc31"
+}
+Experiment 'network_attack' completed successfully. See the runner result above for its run directory and validation status.
+Validated session: 20260920T083158Z_network_attack_ab88fc31
+Collecting network_attack (2 of 3 missing sessions)...
+Preparing local lab for scenario: network_attack
+node/minikube condition met
+deployment "webapp" successfully rolled out
+deployment "metrics-server" successfully rolled out
+webapp-79699899c5-wds9h   772m   13Mi   
+Client version: v0.55.1
+Server version: v0.55.1
+pod/traffic-generator condition met
+
+## Kubernetes Threat Detection Lab
+Minikube:       OK
+Context:        OK
+Node:           Ready
+Webapp:         Ready
+Metrics Server: Ready
+Gadget:         OK
+Traffic Gen:    Running
+Lab status:     READY
+Starting Phase 3 experiment: network_attack
+{
+  "run_directory": "C:\\Users\\adity\\OneDrive\\Desktop\\Kubernetes Threat Detection\\experiments\\runs\\20260920T083402Z_network_attack_de790131",
+  "status": "validated",
+  "experiment_id": "20260920T083402Z_network_attack_de790131"
+}
+Experiment 'network_attack' completed successfully. See the runner result above for its run directory and validation status.
+Validated session: 20260920T083402Z_network_attack_de790131
+Collecting network_attack (3 of 3 missing sessions)...
+Preparing local lab for scenario: network_attack
+node/minikube condition met
+deployment "webapp" successfully rolled out
+deployment "metrics-server" successfully rolled out
+webapp-79699899c5-wds9h   790m   13Mi   
+Client version: v0.55.1
+Server version: v0.55.1
+pod/traffic-generator condition met
+
+## Kubernetes Threat Detection Lab
+Minikube:       OK
+Context:        OK
+Node:           Ready
+Webapp:         Ready
+Metrics Server: Ready
+Gadget:         OK
+Traffic Gen:    Running
+Lab status:     READY
+Starting Phase 3 experiment: network_attack
+{
+  "run_directory": "C:\\Users\\adity\\OneDrive\\Desktop\\Kubernetes Threat Detection\\experiments\\runs\\20260920T083603Z_network_attack_c6c39027",
+  "status": "validated",
+  "experiment_id": "20260920T083603Z_network_attack_c6c39027"
+}
+Experiment 'network_attack' completed successfully. See the runner result above for its run directory and validation status.
+Validated session: 20260920T083603Z_network_attack_c6c39027
+Collecting workload_normal (1 of 3 missing sessions)...
+Preparing local lab for scenario: workload_normal
+node/minikube condition met
+deployment "webapp" successfully rolled out
+deployment "metrics-server" successfully rolled out
+webapp-79699899c5-wds9h   883m   13Mi   
+Client version: v0.55.1
+Server version: v0.55.1
+pod/traffic-generator condition met
+
+## Kubernetes Threat Detection Lab
+Minikube:       OK
+Context:        OK
+Node:           Ready
+Webapp:         Ready
+Metrics Server: Ready
+Gadget:         OK
+Traffic Gen:    Running
+Lab status:     READY
+Starting Phase 3 experiment: workload_normal
+{
+  "run_directory": "C:\\Users\\adity\\OneDrive\\Desktop\\Kubernetes Threat Detection\\experiments\\runs\\20260920T083801Z_workload_normal_51a9e2ea",
+  "status": "validated",
+  "experiment_id": "20260920T083801Z_workload_normal_51a9e2ea"
+}
+Experiment 'workload_normal' completed successfully. See the runner result above for its run directory and validation status.
+Validated session: 20260920T083801Z_workload_normal_51a9e2ea
+Collecting workload_normal (2 of 3 missing sessions)...
+Preparing local lab for scenario: workload_normal
+node/minikube condition met
+deployment "webapp" successfully rolled out
+deployment "metrics-server" successfully rolled out
+webapp-79699899c5-wds9h   994m   13Mi   
+Client version: v0.55.1
+Server version: v0.55.1
+pod/traffic-generator condition met
+
+## Kubernetes Threat Detection Lab
+Minikube:       OK
+Context:        OK
+Node:           Ready
+Webapp:         Ready
+Metrics Server: Ready
+Gadget:         OK
+Traffic Gen:    Running
+Lab status:     READY
+Starting Phase 3 experiment: workload_normal
+{
+  "run_directory": "C:\\Users\\adity\\OneDrive\\Desktop\\Kubernetes Threat Detection\\experiments\\runs\\20260920T083955Z_workload_normal_b3cc8261",
+  "status": "validated",
+  "experiment_id": "20260920T083955Z_workload_normal_b3cc8261"
+}
+Experiment 'workload_normal' completed successfully. See the runner result above for its run directory and validation status.
+Validated session: 20260920T083955Z_workload_normal_b3cc8261
+Collecting workload_normal (3 of 3 missing sessions)...
+Preparing local lab for scenario: workload_normal
+node/minikube condition met
+deployment "webapp" successfully rolled out
+deployment "metrics-server" successfully rolled out
+webapp-79699899c5-wds9h   1107m   13Mi   
+Client version: v0.55.1
+Server version: v0.55.1
+pod/traffic-generator condition met
+
+## Kubernetes Threat Detection Lab
+Minikube:       OK
+Context:        OK
+Node:           Ready
+Webapp:         Ready
+Metrics Server: Ready
+Gadget:         OK
+Traffic Gen:    Running
+Lab status:     READY
+Starting Phase 3 experiment: workload_normal
+{
+  "run_directory": "C:\\Users\\adity\\OneDrive\\Desktop\\Kubernetes Threat Detection\\experiments\\runs\\20260920T084150Z_workload_normal_cc70050b",
+  "status": "validated",
+  "experiment_id": "20260920T084150Z_workload_normal_cc70050b"
+}

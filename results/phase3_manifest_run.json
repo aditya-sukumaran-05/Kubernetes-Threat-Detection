@@ -1,0 +1,29 @@
+﻿{
+  "experiments": [
+    {
+      "experiment_id": "20260919T155421Z_network_normal_024dcd0f",
+      "scenario": "network_normal",
+      "label": "normal",
+      "status": "planned",
+      "start_time_utc": null,
+      "end_time_utc": null,
+      "network_attack_start_time_utc": null,
+      "network_attack_end_time_utc": null,
+      "workload_attack_start_time_utc": null,
+      "workload_attack_end_time_utc": null,
+      "overlap_start_time_utc": null,
+      "overlap_end_time_utc": null,
+      "telemetry_available": {
+        "network": false,
+        "workload": false
+      },
+      "sample_counts": {
+        "network": 0,
+        "workload": 0
+      },
+      "validation": {},
+      "notes": "Planned by the reproducible experiment runner."
+    }
+  ],
+  "count": 1
+}

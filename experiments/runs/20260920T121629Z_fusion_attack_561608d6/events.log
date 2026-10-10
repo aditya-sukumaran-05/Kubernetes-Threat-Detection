@@ -1,0 +1,8 @@
+2026-09-20T12:16:29.562Z run directory created
+2026-09-20T12:16:29.707Z experiment started
+2026-09-20T12:16:31.739Z network and workload collectors confirmed running
+2026-09-20T12:16:51.743Z network burst started
+2026-09-20T12:16:52.015Z controlled CPU workload started
+2026-09-20T12:18:02.723Z controlled CPU workload ended
+2026-09-20T12:18:02.723Z network burst ended
+2026-09-20T12:18:22.724Z experiment capture ended

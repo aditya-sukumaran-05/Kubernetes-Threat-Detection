@@ -1,0 +1,8 @@
+{
+  "name": "network",
+  "dataset": "results/ml_datasets/network_dataset.csv",
+  "features": ["network_accept_count", "network_close_count", "network_connection_count", "network_connection_rate", "network_error_count", "network_event_count", "network_interarrival_max_seconds", "network_interarrival_mean_seconds", "network_interarrival_min_seconds", "network_interarrival_std_seconds", "network_unique_destination_ips", "network_unique_source_ips", "network_unique_source_ports"],
+  "models": ["random_forest", "xgboost", "svm"],
+  "random_seed": 42,
+  "output_dir": "results/network"
+}

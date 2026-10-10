@@ -1,0 +1,131 @@
+﻿{
+  "datasets": {
+    "network": {
+      "name": "network",
+      "path": "C:\\Users\\adity\\OneDrive\\Desktop\\Kubernetes Threat Detection\\results\\ml_datasets\\network_dataset.csv",
+      "rows": 17,
+      "labeled_rows": 17,
+      "class_counts": {
+        "normal": 14,
+        "attack": 3
+      },
+      "session_counts": {
+        "network_normal_20260919": 14,
+        "network_burst_20260919": 3
+      },
+      "features": [
+        "network_accept_count",
+        "network_close_count",
+        "network_connection_count",
+        "network_connection_rate",
+        "network_error_count",
+        "network_event_count",
+        "network_interarrival_max_seconds",
+        "network_interarrival_mean_seconds",
+        "network_interarrival_min_seconds",
+        "network_interarrival_std_seconds",
+        "network_unique_destination_ips",
+        "network_unique_destination_ports",
+        "network_unique_source_ips",
+        "network_unique_source_ports"
+      ],
+      "sha256": "dcdcab4c2fb0bf4111bfc650fa77b5f7ddb09c5cd440d4a5d98ad31c8a3d8d9f",
+      "limitation": null
+    },
+    "workload": {
+      "name": "workload",
+      "path": "C:\\Users\\adity\\OneDrive\\Desktop\\Kubernetes Threat Detection\\results\\ml_datasets\\workload_dataset.csv",
+      "rows": 181,
+      "labeled_rows": 97,
+      "class_counts": {
+        "normal": 97
+      },
+      "session_counts": {
+        "workload_normal_20260919": 97
+      },
+      "features": [
+        "workload_cpu_millicores_delta",
+        "workload_cpu_millicores_last",
+        "workload_cpu_millicores_max",
+        "workload_cpu_millicores_mean",
+        "workload_cpu_millicores_min",
+        "workload_memory_mib_delta",
+        "workload_memory_mib_last",
+        "workload_memory_mib_max",
+        "workload_memory_mib_mean",
+        "workload_memory_mib_min",
+        "workload_sample_count"
+      ],
+      "sha256": "11763c3adb1a54edca896fccd9d97b9068df716f622de519cc625d5fc41ce7fe",
+      "limitation": "The CPU-abuse capture has no explicit metadata interval, so its 84 windows are excluded as unknown."
+    },
+    "fusion": {
+      "name": "fusion",
+      "path": "C:\\Users\\adity\\OneDrive\\Desktop\\Kubernetes Threat Detection\\results\\ml_datasets\\fusion_dataset.csv",
+      "rows": 0,
+      "labeled_rows": 0,
+      "class_counts": {},
+      "session_counts": {},
+      "features": [],
+      "sha256": "d1601ea5e0aec60124f44af5b235efd5488c3ab798e8a4401bb59810ec108eb5",
+      "limitation": "No same-session, temporally aligned network and workload capture is currently available."
+    }
+  },
+  "experiments": [
+    {
+      "telemetry": "network",
+      "model": "logistic_regression",
+      "status": "not_evaluable",
+      "reason": "need at least two independent sessions per class; available={'normal': ['network_normal_20260919'], 'attack': ['network_burst_20260919']}",
+      "split_strategy": "session_holdout_per_class",
+      "training_samples": 0,
+      "test_samples": 0
+    },
+    {
+      "telemetry": "network",
+      "model": "random_forest",
+      "status": "not_evaluable",
+      "reason": "need at least two independent sessions per class; available={'normal': ['network_normal_20260919'], 'attack': ['network_burst_20260919']}",
+      "split_strategy": "session_holdout_per_class",
+      "training_samples": 0,
+      "test_samples": 0
+    },
+    {
+      "telemetry": "workload",
+      "model": "logistic_regression",
+      "status": "not_evaluable",
+      "reason": "supervised evaluation requires both classes; missing ['attack']",
+      "split_strategy": "session_holdout_per_class",
+      "training_samples": 0,
+      "test_samples": 0
+    },
+    {
+      "telemetry": "workload",
+      "model": "random_forest",
+      "status": "not_evaluable",
+      "reason": "supervised evaluation requires both classes; missing ['attack']",
+      "split_strategy": "session_holdout_per_class",
+      "training_samples": 0,
+      "test_samples": 0
+    },
+    {
+      "telemetry": "fusion",
+      "model": "logistic_regression",
+      "status": "not_evaluable",
+      "reason": "dataset contains zero labeled samples",
+      "split_strategy": "session_holdout_per_class",
+      "training_samples": 0,
+      "test_samples": 0
+    },
+    {
+      "telemetry": "fusion",
+      "model": "random_forest",
+      "status": "not_evaluable",
+      "reason": "dataset contains zero labeled samples",
+      "split_strategy": "session_holdout_per_class",
+      "training_samples": 0,
+      "test_samples": 0
+    }
+  ],
+  "figure_status": "No performance figures generated because no experiment passed the session-aware evaluation eligibility checks."
+}

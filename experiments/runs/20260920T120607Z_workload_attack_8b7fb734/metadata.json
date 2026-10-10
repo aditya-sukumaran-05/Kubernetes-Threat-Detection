@@ -1,0 +1,71 @@
+{
+  "experiment_id": "20260920T120607Z_workload_attack_8b7fb734",
+  "scenario": "workload_attack",
+  "label": "attack",
+  "namespace": "default",
+  "target_workload": "deployment/webapp",
+  "collector_config": {
+    "network_gadget_version": "v0.55.1",
+    "workload_interval_seconds": 5
+  },
+  "network_activity": "low-rate HTTP requests",
+  "workload_activity": "controlled in-container CPU loop",
+  "notes": "Planned by the reproducible experiment runner.",
+  "status": "validated",
+  "experiment_start_time_utc": "2026-09-20T12:06:07.915Z",
+  "experiment_end_time_utc": "2026-09-20T12:08:01.887Z",
+  "attack_start_time_utc": "2026-09-20T12:06:30.376Z",
+  "attack_end_time_utc": "2026-09-20T12:07:41.884Z",
+  "network_attack_start_time_utc": null,
+  "network_attack_end_time_utc": null,
+  "workload_attack_start_time_utc": "2026-09-20T12:06:30.376Z",
+  "workload_attack_end_time_utc": "2026-09-20T12:07:41.884Z",
+  "overlap_start_time_utc": null,
+  "overlap_end_time_utc": null,
+  "telemetry": {
+    "network": "network.jsonl",
+    "workload": "workload.csv"
+  },
+  "events": [
+    {
+      "timestamp_utc": "2026-09-20T12:06:30.376Z",
+      "event": "controlled CPU workload started"
+    },
+    {
+      "timestamp_utc": "2026-09-20T12:06:30.446Z",
+      "event": "normal traffic started"
+    },
+    {
+      "timestamp_utc": "2026-09-20T12:07:41.884Z",
+      "event": "controlled CPU workload ended"
+    },
+    {
+      "timestamp_utc": "2026-09-20T12:08:01.887Z",
+      "event": "experiment capture ended"
+    }
+  ],
+  "validation": {
+    "valid": true,
+    "errors": [],
+    "attack_window_report": {
+      "network_attack": {
+        "start_time_utc": null,
+        "end_time_utc": null,
+        "duration_seconds": null,
+        "complete_10_second_windows": 0
+      },
+      "workload_attack": {
+        "start_time_utc": "2026-09-20T12:06:30.376Z",
+        "end_time_utc": "2026-09-20T12:07:41.884Z",
+        "duration_seconds": 71.508,
+        "complete_10_second_windows": 6
+      },
+      "fusion_overlap": {
+        "start_time_utc": null,
+        "end_time_utc": null,
+        "duration_seconds": null,
+        "complete_10_second_windows": 0
+      }
+    }
+  }
+}
