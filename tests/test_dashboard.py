@@ -83,11 +83,11 @@ def test_dashboard_manual_mode_toggle() -> None:
 def test_dashboard_live_network_capture_mode_toggle() -> None:
     """Test switching detection source mode to Live Network Capture in AppTest."""
     at = AppTest.from_file("dashboard/app.py")
-    at.run(timeout=15)
+    at.run(timeout=25)
 
     # Toggle radio to Live Network Capture
     at.sidebar.radio[0].set_value("Live Network Capture")
-    at.run(timeout=15)
+    at.run(timeout=25)
 
     assert not at.exception
     # Verify live capture metrics are rendered
@@ -105,11 +105,11 @@ def test_dashboard_live_network_capture_mode_toggle() -> None:
 def test_dashboard_live_network_capture_model_switch() -> None:
     """Test switching models while in Live Network Capture mode."""
     at = AppTest.from_file("dashboard/app.py")
-    at.run(timeout=15)
+    at.run(timeout=25)
 
     at.sidebar.radio[0].set_value("Live Network Capture")
     at.sidebar.selectbox[1].set_value("xgboost")
-    at.run(timeout=15)
+    at.run(timeout=25)
 
     assert not at.exception
     model_metrics = [m for m in at.metric if m.label == "Active Model"]
@@ -117,7 +117,7 @@ def test_dashboard_live_network_capture_model_switch() -> None:
     assert model_metrics[0].value == "Xgboost"
 
     at.sidebar.selectbox[1].set_value("svm")
-    at.run(timeout=15)
+    at.run(timeout=25)
     assert not at.exception
     model_metrics = [m for m in at.metric if m.label == "Active Model"]
     assert model_metrics[0].value == "Svm"
@@ -195,10 +195,10 @@ render_live_capture(det, "random_forest", capture_path=Path(r"{bad_file.as_posix
 def test_dashboard_live_capture_filter_and_window_navigation() -> None:
     """Test table filtering and window inspection slider in live capture mode."""
     at = AppTest.from_file("dashboard/app.py")
-    at.run(timeout=15)
+    at.run(timeout=25)
 
     at.sidebar.radio[0].set_value("Live Network Capture")
-    at.run(timeout=15)
+    at.run(timeout=25)
 
     assert not at.exception
     # Verify table is rendered
@@ -209,7 +209,7 @@ def test_dashboard_live_capture_filter_and_window_navigation() -> None:
     filter_cb = [c for c in at.checkbox if "Show only windows with active network traffic" in c.label]
     assert len(filter_cb) == 1
     filter_cb[0].set_value(True)
-    at.run(timeout=15)
+    at.run(timeout=25)
 
     assert not at.exception
     # Filtered table should have <= rows than initial

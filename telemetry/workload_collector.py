@@ -4,6 +4,8 @@ import csv
 import time
 import os
 from datetime import datetime, timezone
+import sys
+import psutil
 
 OUTPUT_FILE = "telemetry/data/workload_metrics.csv"
 LABEL = "normal"
@@ -72,7 +74,24 @@ def main() -> None:
         with open(args.output, "w", newline="") as file:
             csv.writer(file).writerow(["timestamp", "pod", "cpu_millicores", "memory_mib", "label"])
     print("Starting Kubernetes workload telemetry collector; dynamically discovering app=webapp.")
-    pid_file = os.path.join(os.path.dirname(args.output) or ".", ".workload_collector.pid")
+    candidate_pids = [
+        os.path.join(os.path.dirname(args.output) or ".", ".workload_collector.pid"),
+        os.path.join("telemetry", "data", ".workload_collector.pid"),
+    ]
+    for c_pid_file in candidate_pids:
+        if os.path.exists(c_pid_file):
+            try:
+                with open(c_pid_file, "r", encoding="utf-8") as pf:
+                    content = pf.read().strip()
+                    if content:
+                        existing_pid = int(content)
+                        if psutil.pid_exists(existing_pid):
+                            print(f"Error: Workload collector already running with PID {existing_pid}. Refusing to start duplicate collector.")
+                            sys.exit(1)
+            except (ValueError, OSError):
+                pass
+    pid_file = candidate_pids[0]
+
     try:
         with open(pid_file, "w", encoding="utf-8") as pf:
             pf.write(str(os.getpid()))

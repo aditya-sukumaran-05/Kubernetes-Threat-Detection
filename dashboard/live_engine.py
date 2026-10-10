@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_NETWORK_PATH = Path("telemetry/data/network/network_events.jsonl")
 DEFAULT_WORKLOAD_PATH = Path("telemetry/data/workload_metrics.csv")
 DEFAULT_RUNTIME_PATH = Path("telemetry/data/runtime/runtime_events.jsonl")
-MAX_RETAINED_WINDOWS = 100
+MAX_RETAINED_WINDOWS = 50
 STALE_THRESHOLD_SECONDS = 30.0
 
 
@@ -482,6 +482,8 @@ class LiveTelemetryEngine:
             runtime_starts = runtime_starts[-self.max_retained_windows:]
 
         all_starts = sorted(set(net_starts) | set(workload_starts) | set(runtime_starts))
+        if len(all_starts) > self.max_retained_windows:
+            all_starts = all_starts[-self.max_retained_windows:]
 
         # Prune dropped windows from memory registry
         active_set = set(all_starts)

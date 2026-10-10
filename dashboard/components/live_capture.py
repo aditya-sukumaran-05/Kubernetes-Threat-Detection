@@ -178,16 +178,25 @@ def render_live_capture(
     else:  # default fallback
         latest_inf = latest_record.fusion_inferences.get(selected_model) or latest_record.network_inferences.get(selected_model)
 
-    attack_count = sum(
-        1 for r in records
-        if (
-            (selected_modality == "network" and r.network_inferences.get(selected_model, None) and r.network_inferences[selected_model].predicted_label == "attack")
-            or (selected_modality == "workload" and r.workload_inferences.get(selected_model, None) and r.workload_inferences[selected_model].predicted_label == "attack")
-            or (selected_modality == "fusion" and r.fusion_inferences.get(selected_model, None) and r.fusion_inferences[selected_model].predicted_label == "attack")
-            or (r.network_inferences.get(selected_model, None) and r.network_inferences[selected_model].predicted_label == "attack")
-        )
-    )
-    normal_count = total_windows - attack_count
+    # Count evaluations strictly for the selected modality
+    evaluated_records = []
+    attack_count = 0
+    for r in records:
+        inf = None
+        if selected_modality == "network" and r.network_available:
+            inf = r.network_inferences.get(selected_model)
+        elif selected_modality == "workload" and r.workload_available:
+            inf = r.workload_inferences.get(selected_model)
+        elif selected_modality == "fusion" and r.is_fused:
+            inf = r.fusion_inferences.get(selected_model)
+
+        if inf is not None:
+            evaluated_records.append(r)
+            if inf.predicted_label == "attack":
+                attack_count += 1
+
+    normal_count = len(evaluated_records) - attack_count
+    unevaluated_count = total_windows - len(evaluated_records)
 
     # High-level Metrics Row
     m1, m2, m3, m4 = st.columns(4)
@@ -196,7 +205,8 @@ def render_live_capture(
     with m2:
         st.metric("Inference Windows (10s)", total_windows)
     with m3:
-        st.metric("Threat Breakdown", f"{attack_count} Attack / {normal_count} Normal")
+        help_msg = f"{len(evaluated_records)} evaluated windows ({unevaluated_count} idle/missing for {selected_modality})"
+        st.metric("Threat Breakdown", f"{attack_count} Attack / {normal_count} Normal", help=help_msg)
     with m4:
         st.metric("Active Model", selected_model.replace("_", " ").title())
 

@@ -1,7 +1,10 @@
 import argparse
-import subprocess
 import json
 import os
+import subprocess
+import sys
+
+import psutil
 
 OUTPUT_FILE = "telemetry/data/network/network_events.jsonl"
 
@@ -14,6 +17,25 @@ def main() -> None:
     parser.add_argument("--gadget-version", default="v0.55.1")
     args = parser.parse_args()
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+
+    candidate_pids = [
+        os.path.join(os.path.dirname(args.output) or ".", ".network_collector.pid"),
+        os.path.join("telemetry", "data", ".network_collector.pid"),
+    ]
+    for c_pid_file in candidate_pids:
+        if os.path.exists(c_pid_file):
+            try:
+                with open(c_pid_file, "r", encoding="utf-8") as pf:
+                    content = pf.read().strip()
+                    if content:
+                        existing_pid = int(content)
+                        if psutil.pid_exists(existing_pid):
+                            print(f"Error: Network collector already running with PID {existing_pid}. Refusing to start duplicate collector.")
+                            sys.exit(1)
+            except (ValueError, OSError):
+                pass
+    pid_file = candidate_pids[0]
+
     gadget_dir = os.path.join(os.path.expanduser("~"), "bin")
     env = os.environ.copy()
     env["PATH"] = gadget_dir + os.pathsep + env.get("PATH", "")
@@ -31,7 +53,6 @@ def main() -> None:
         "json",
     ]
     print("Starting Kubernetes network telemetry collector. Press Ctrl+C to stop.")
-    pid_file = os.path.join(os.path.dirname(args.output) or ".", ".network_collector.pid")
     try:
         with open(pid_file, "w", encoding="utf-8") as pf:
             pf.write(str(os.getpid()))

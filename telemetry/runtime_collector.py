@@ -37,6 +37,18 @@ def main() -> None:
     print("Press Ctrl+C to stop.")
 
     pid_file = os.path.join(os.path.dirname(args.output) or ".", ".runtime_collector.pid")
+    if os.path.exists(pid_file):
+        try:
+            with open(pid_file, "r", encoding="utf-8") as pf:
+                content = pf.read().strip()
+                if content:
+                    existing_pid = int(content)
+                    if psutil.pid_exists(existing_pid):
+                        print(f"Error: Runtime collector already running with PID {existing_pid}. Refusing to start duplicate collector.")
+                        sys.exit(1)
+        except (ValueError, OSError):
+            pass
+
     try:
         with open(pid_file, "w", encoding="utf-8") as pf:
             pf.write(str(os.getpid()))
