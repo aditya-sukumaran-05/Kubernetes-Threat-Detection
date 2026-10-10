@@ -230,3 +230,24 @@ def test_runtime_collector_release_pid_safe(tmp_path: Path) -> None:
     assert Path(pid_file).read_text(encoding="utf-8").strip() == str(foreign_pid)
 
 
+def test_live_engine_runtime_path_resolution_with_resolved_network_path() -> None:
+    """Regression test: LiveTelemetryEngine initialized with resolved absolute network path
+    must resolve runtime_path to telemetry/data/runtime/runtime_events.jsonl, not network/runtime_events.jsonl."""
+    from dashboard.live_engine import DEFAULT_NETWORK_PATH, DEFAULT_RUNTIME_PATH, LiveTelemetryEngine
+
+    resolved_net_path = Path(DEFAULT_NETWORK_PATH).resolve()
+    engine = LiveTelemetryEngine(network_path=resolved_net_path)
+
+    expected_runtime_path = Path(DEFAULT_RUNTIME_PATH).resolve()
+    actual_runtime_path = engine._resolve_path(engine.runtime_path)
+
+    # Must resolve to telemetry/data/runtime/runtime_events.jsonl, NOT telemetry/data/network/runtime_events.jsonl
+    assert actual_runtime_path == expected_runtime_path
+    assert "network" not in actual_runtime_path.parent.name
+    assert actual_runtime_path.parent.name == "runtime"
+    health = engine.get_runtime_health()
+    assert health.file_exists is True
+    assert "file not found" not in health.status_message
+
+
+

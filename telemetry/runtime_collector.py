@@ -76,9 +76,15 @@ def check_and_acquire_pid(pid_file: str) -> None:
     candidate_pids = [
         pid_file,
         os.path.join(os.path.dirname(pid_file) or ".", ".runtime_collector.pid"),
-        os.path.join("telemetry", "data", "runtime", ".runtime_collector.pid"),
-        os.path.join("telemetry", "data", ".runtime_collector.pid"),
     ]
+    default_runtime_dir = os.path.abspath(os.path.join("telemetry", "data", "runtime"))
+    default_data_dir = os.path.abspath(os.path.join("telemetry", "data"))
+    pid_dir = os.path.abspath(os.path.dirname(pid_file) or ".")
+    if pid_dir in (default_runtime_dir, default_data_dir):
+        candidate_pids.extend([
+            os.path.join("telemetry", "data", "runtime", ".runtime_collector.pid"),
+            os.path.join("telemetry", "data", ".runtime_collector.pid"),
+        ])
     seen: set[str] = set()
 
     for c_path in candidate_pids:

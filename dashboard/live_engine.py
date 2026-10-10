@@ -34,15 +34,29 @@ STALE_THRESHOLD_SECONDS = 30.0
 
 def _check_collector_process(script_name: str, pid_filename: str) -> tuple[bool, int | None]:
     """Check if the collector process is currently running on the operating system."""
-    candidate_paths = [
-        Path("telemetry/data") / pid_filename,
-        Path("telemetry/data/runtime") / pid_filename,
-        Path("telemetry/data/network") / pid_filename,
+    candidate_dirs = [
+        Path("telemetry/data"),
+        Path("telemetry/data/runtime"),
+        Path("telemetry/data/network"),
     ]
+    repo_root = Path(__file__).resolve().parent.parent
+    candidate_paths: list[Path] = [d / pid_filename for d in candidate_dirs] + [
+        repo_root / d / pid_filename for d in candidate_dirs
+    ]
+
+    seen_paths: set[Path] = set()
     for pid_file in candidate_paths:
-        if pid_file.exists():
+        try:
+            resolved_pid = pid_file.resolve()
+        except Exception:
+            resolved_pid = pid_file
+        if resolved_pid in seen_paths:
+            continue
+        seen_paths.add(resolved_pid)
+
+        if resolved_pid.exists():
             try:
-                pid = int(pid_file.read_text(encoding="utf-8").strip())
+                pid = int(resolved_pid.read_text(encoding="utf-8").strip())
                 if psutil.pid_exists(pid):
                     return True, pid
             except Exception:
@@ -122,7 +136,9 @@ class LiveTelemetryEngine:
         self.detector = detector or ThreatDetector()
         self.network_path = Path(network_path)
         self.workload_path = Path(workload_path)
-        if Path(runtime_path) == DEFAULT_RUNTIME_PATH and self.network_path != DEFAULT_NETWORK_PATH and self.network_path.is_absolute():
+        resolved_net = self._resolve_path(self.network_path)
+        resolved_default_net = self._resolve_path(DEFAULT_NETWORK_PATH)
+        if Path(runtime_path) == DEFAULT_RUNTIME_PATH and resolved_net != resolved_default_net:
             self.runtime_path = self.network_path.parent / "runtime_events.jsonl"
         else:
             self.runtime_path = Path(runtime_path)
@@ -280,6 +296,7 @@ class LiveTelemetryEngine:
 
     def get_network_health(self) -> CollectorHealth:
         """Inspect network collector health, process status, and telemetry freshness."""
+        self.read_new_network_events()
         resolved = self._resolve_path(self.network_path)
         file_exists = resolved.exists()
         last_ts = self._network_valid_events[-1].timestamp if self._network_valid_events else None
@@ -337,6 +354,7 @@ class LiveTelemetryEngine:
 
     def get_workload_health(self) -> CollectorHealth:
         """Inspect workload collector health, process status, and telemetry freshness."""
+        self.read_new_workload_samples()
         resolved = self._resolve_path(self.workload_path)
         file_exists = resolved.exists()
         last_ts = self._workload_valid_samples[-1].timestamp if self._workload_valid_samples else None
@@ -394,6 +412,7 @@ class LiveTelemetryEngine:
 
     def get_runtime_health(self) -> CollectorHealth:
         """Inspect runtime collector health, process status, and telemetry freshness."""
+        self.read_new_runtime_events()
         resolved = self._resolve_path(self.runtime_path)
         file_exists = resolved.exists()
         last_ts = self._runtime_valid_events[-1].timestamp if self._runtime_valid_events else None

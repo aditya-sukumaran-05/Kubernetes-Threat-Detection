@@ -17,7 +17,14 @@ import streamlit as st
 from dashboard.components.charts import render_telemetry_charts
 from dashboard.components.evidence import render_evidence
 from dashboard.components.summary import render_detection_summary
-from dashboard.live_engine import DEFAULT_NETWORK_PATH, DEFAULT_WORKLOAD_PATH, CollectorHealth, LiveTelemetryEngine, LiveWindowRecord
+from dashboard.live_engine import (
+    DEFAULT_NETWORK_PATH,
+    DEFAULT_RUNTIME_PATH,
+    DEFAULT_WORKLOAD_PATH,
+    CollectorHealth,
+    LiveTelemetryEngine,
+    LiveWindowRecord,
+)
 from ml.inference import InferenceResult, ThreatDetector
 from telemetry.schemas import SchemaError
 
@@ -39,14 +46,17 @@ def render_live_capture(
     selected_model: str,
     capture_path: Path | str = DEFAULT_NETWORK_PATH,
     workload_path: Path | str = DEFAULT_WORKLOAD_PATH,
+    runtime_path: Path | str = DEFAULT_RUNTIME_PATH,
     selected_modality: str = "network",
 ) -> None:
     """Render the Live Detection & Fusion view with incremental telemetry ingestion."""
     raw_net_path = Path(capture_path)
     raw_wl_path = Path(workload_path)
+    raw_rt_path = Path(runtime_path)
 
     resolved_net_path = raw_net_path if raw_net_path.is_absolute() else (detector.project_root / raw_net_path).resolve()
     resolved_wl_path = raw_wl_path if raw_wl_path.is_absolute() else (detector.project_root / raw_wl_path).resolve()
+    resolved_rt_path = raw_rt_path if raw_rt_path.is_absolute() else (detector.project_root / raw_rt_path).resolve()
 
     # 1. Operational Mode Banner
     st.info(
@@ -93,12 +103,13 @@ def render_live_capture(
         return
 
     # 3. Retrieve or initialize persistent LiveTelemetryEngine in session state
-    engine_key = f"live_engine_{resolved_net_path}_{resolved_wl_path}"
+    engine_key = f"live_engine_{resolved_net_path}_{resolved_wl_path}_{resolved_rt_path}"
     if engine_key not in st.session_state:
         st.session_state[engine_key] = LiveTelemetryEngine(
             detector=detector,
             network_path=resolved_net_path,
             workload_path=resolved_wl_path,
+            runtime_path=resolved_rt_path,
         )
 
     engine: LiveTelemetryEngine = st.session_state[engine_key]
