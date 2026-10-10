@@ -155,22 +155,47 @@ class LiveTelemetryEngine:
         self._network_valid_events: list[NetworkEvent] = []
         self._network_malformed_count: int = 0
         self._network_cumulative_count: int = 0
+        self._network_file_id: tuple | None = None
+        self._network_header_bytes: bytes = b""
 
         self._workload_file_offset: int = 0
-        self._workload_partial_buffer: str = ""
-        self._workload_seen_lines: set[str] = set()
+        self._workload_partial_bytes: bytes = b""
+        self._workload_seen_samples: set[tuple[datetime, str]] = set()
         self._workload_valid_samples: list[WorkloadSample] = []
         self._workload_malformed_count: int = 0
         self._workload_cumulative_count: int = 0
+        self._workload_file_id: tuple | None = None
+        self._workload_header_bytes: bytes = b""
 
         self._runtime_file_offset: int = 0
         self._runtime_partial_buffer: str = ""
         self._runtime_valid_events: list[RuntimeEvent] = []
         self._runtime_malformed_count: int = 0
         self._runtime_cumulative_count: int = 0
+        self._runtime_file_id: tuple | None = None
+        self._runtime_header_bytes: bytes = b""
 
         # Synchronized windows registry: window_start -> LiveWindowRecord
         self.windows: dict[str, LiveWindowRecord] = {}
+
+    @property
+    def _workload_partial_buffer(self) -> str:
+        return self._workload_partial_bytes.decode("utf-8", errors="replace")
+
+    @_workload_partial_buffer.setter
+    def _workload_partial_buffer(self, val: str | bytes) -> None:
+        if isinstance(val, str):
+            self._workload_partial_bytes = val.encode("utf-8")
+        else:
+            self._workload_partial_bytes = val
+
+    @property
+    def _workload_seen_lines(self) -> set[str]:
+        return {f"{isoformat_z(k[0])}|{k[1]}" for k in self._workload_seen_samples}
+
+    @_workload_seen_lines.setter
+    def _workload_seen_lines(self, val: set[str]) -> None:
+        pass
 
     def _resolve_path(self, path: Path) -> Path:
         if not path.is_absolute():
@@ -181,38 +206,74 @@ class LiveTelemetryEngine:
         return path
 
     def read_new_network_events(self) -> list[NetworkEvent]:
-        """Incrementally read new valid NetworkEvents, handling partial lines and bad JSON."""
+        """Incrementally read new valid NetworkEvents, handling partial lines, multibyte UTF-8, and rotations."""
         resolved = self._resolve_path(self.network_path)
-        if not resolved.exists() or resolved.stat().st_size == 0:
+        if not resolved.exists():
             return []
 
-        new_events: list[NetworkEvent] = []
-        file_size = resolved.stat().st_size
+        try:
+            st = resolved.stat()
+        except OSError as exc:
+            logger.warning("Error stating network capture %s: %s", resolved, exc)
+            return []
 
-        # If file was truncated or rotated, reset offset
-        if file_size < self._network_file_offset:
+        if st.st_size == 0:
+            return []
+
+        # Detect rotation or replacement (even if replacement file >= previous size)
+        current_id = (st.st_ino, getattr(st, "st_dev", 0), getattr(st, "st_ctime_ns", 0))
+        if self._network_file_id is not None and current_id != self._network_file_id:
+            logger.info("Network capture file replaced or rotated. Resetting offset.")
             self._network_file_offset = 0
             self._network_partial_buffer = ""
+            self._network_header_bytes = b""
 
+        self._network_file_id = current_id
+
+        # Detect in-place truncation
+        if st.st_size < self._network_file_offset:
+            self._network_file_offset = 0
+            self._network_partial_buffer = ""
+            self._network_header_bytes = b""
+
+        new_events: list[NetworkEvent] = []
         try:
-            with resolved.open("r", encoding="utf-8", errors="replace") as handle:
+            with resolved.open("rb") as handle:
+                # Detect in-place rewrite of initial records
+                if self._network_file_offset > 0 and self._network_header_bytes:
+                    handle.seek(0)
+                    hdr = handle.read(len(self._network_header_bytes))
+                    if hdr != self._network_header_bytes:
+                        self._network_file_offset = 0
+                        self._network_partial_buffer = ""
+                        self._network_header_bytes = b""
+
                 handle.seek(self._network_file_offset)
-                chunk = handle.read()
+                chunk_bytes = handle.read()
                 self._network_file_offset = handle.tell()
         except OSError as exc:
             logger.warning("Error reading network capture %s: %s", resolved, exc)
             return []
 
-        if not chunk:
+        if not chunk_bytes:
             return []
 
-        combined = self._network_partial_buffer + chunk
-        lines = combined.split("\n")
+        combined_bytes = self._network_partial_buffer.encode("utf-8") + chunk_bytes
+        last_nl = combined_bytes.rfind(b"\n")
+        if last_nl == -1:
+            self._network_partial_buffer = combined_bytes.decode("utf-8", errors="replace")
+            return []
 
-        # The last segment after the final newline is either empty or a partial write
-        self._network_partial_buffer = lines.pop()
+        complete_bytes = combined_bytes[: last_nl + 1]
+        self._network_partial_buffer = combined_bytes[last_nl + 1 :].decode("utf-8", errors="replace")
 
-        for line in lines:
+        if not self._network_header_bytes:
+            first_nl = complete_bytes.find(b"\n")
+            if first_nl != -1:
+                self._network_header_bytes = complete_bytes[: first_nl + 1]
+
+        decoded_text = complete_bytes.decode("utf-8", errors="replace")
+        for line in decoded_text.splitlines():
             line_str = line.strip()
             if not line_str:
                 continue
@@ -231,46 +292,86 @@ class LiveTelemetryEngine:
     def read_new_workload_samples(self) -> list[WorkloadSample]:
         """Incrementally read new valid WorkloadSamples from CSV using byte-offset seeking."""
         resolved = self._resolve_path(self.workload_path)
-        if not resolved.exists() or resolved.stat().st_size == 0:
+        if not resolved.exists():
             return []
 
-        file_size = resolved.stat().st_size
-        if file_size < self._workload_file_offset:
+        try:
+            st = resolved.stat()
+        except OSError as exc:
+            logger.warning("Error stating workload capture %s: %s", resolved, exc)
+            return []
+
+        if st.st_size == 0:
+            return []
+
+        # Detect rotation or replacement (even if replacement file >= previous size)
+        current_id = (st.st_ino, getattr(st, "st_dev", 0), getattr(st, "st_ctime_ns", 0))
+        if self._workload_file_id is not None and current_id != self._workload_file_id:
+            logger.info("Workload capture file replaced or rotated. Resetting offset.")
             self._workload_file_offset = 0
-            self._workload_partial_buffer = ""
-            self._workload_seen_lines.clear()
+            self._workload_partial_bytes = b""
+            self._workload_seen_samples.clear()
+            self._workload_header_bytes = b""
+
+        self._workload_file_id = current_id
+
+        # Detect in-place truncation
+        if st.st_size < self._workload_file_offset:
+            self._workload_file_offset = 0
+            self._workload_partial_bytes = b""
+            self._workload_seen_samples.clear()
+            self._workload_header_bytes = b""
 
         try:
-            with resolved.open("r", encoding="utf-8", errors="replace") as handle:
+            with resolved.open("rb") as handle:
+                # Detect in-place rewrite of initial records
+                if self._workload_file_offset > 0 and self._workload_header_bytes:
+                    handle.seek(0)
+                    hdr = handle.read(len(self._workload_header_bytes))
+                    if hdr != self._workload_header_bytes:
+                        self._workload_file_offset = 0
+                        self._workload_partial_bytes = b""
+                        self._workload_seen_samples.clear()
+                        self._workload_header_bytes = b""
+
                 handle.seek(self._workload_file_offset)
-                chunk = handle.read()
+                chunk_bytes = handle.read()
                 self._workload_file_offset = handle.tell()
         except OSError as exc:
             logger.warning("Error reading workload capture %s: %s", resolved, exc)
             return []
 
-        if not chunk:
+        if not chunk_bytes:
             return []
 
-        if chunk.startswith("\ufeff"):
-            chunk = chunk[1:]
+        combined = self._workload_partial_bytes + chunk_bytes
 
-        combined = self._workload_partial_buffer + chunk
-        lines = combined.split("\n")
-        self._workload_partial_buffer = lines.pop()
+        # Strip UTF-8 BOM if at the beginning of the stream
+        if self._workload_file_offset == len(chunk_bytes) and not self._workload_partial_bytes:
+            if combined.startswith(b"\xef\xbb\xbf"):
+                combined = combined[3:]
+
+        last_nl = combined.rfind(b"\n")
+        if last_nl == -1:
+            self._workload_partial_bytes = combined
+            return []
+
+        complete_bytes = combined[: last_nl + 1]
+        self._workload_partial_bytes = combined[last_nl + 1 :]
+
+        if not self._workload_header_bytes:
+            first_nl = complete_bytes.find(b"\n")
+            if first_nl != -1:
+                self._workload_header_bytes = complete_bytes[: first_nl + 1]
+
+        decoded_text = complete_bytes.decode("utf-8", errors="replace")
 
         new_samples: list[WorkloadSample] = []
-        for line in lines:
-            line_str = line.strip()
-            if not line_str:
+        for parts in csv.reader(decoded_text.splitlines()):
+            if not parts:
                 continue
-            if line_str.startswith("timestamp,") or "cpu_millicores" in line_str:
-                continue
-
-            try:
-                parts = next(csv.reader([line_str]))
-            except Exception:
-                self._workload_malformed_count += 1
+            first_field = parts[0].strip()
+            if first_field.startswith("timestamp") or (len(parts) > 2 and "cpu" in parts[2]):
                 continue
 
             if len(parts) < 4:
@@ -283,13 +384,14 @@ class LiveTelemetryEngine:
                 "cpu_millicores": parts[2].strip(),
                 "memory_mib": parts[3].strip(),
             }
-            row_key = f"{row['timestamp']}|{row['pod']}"
-            if row_key in self._workload_seen_lines:
-                continue
-            self._workload_seen_lines.add(row_key)
 
             try:
                 sample = WorkloadSample.from_raw(row)
+                dedup_key = (sample.timestamp, sample.pod)
+                if dedup_key in self._workload_seen_samples:
+                    continue
+                self._workload_seen_samples.add(dedup_key)
+
                 new_samples.append(sample)
                 self._workload_valid_samples.append(sample)
                 self._workload_cumulative_count += 1
@@ -299,46 +401,84 @@ class LiveTelemetryEngine:
         return new_samples
 
     def read_new_runtime_events(self) -> list[RuntimeEvent]:
-        """Incrementally read new valid RuntimeEvents, handling partial lines and bad JSON."""
+        """Incrementally read new valid RuntimeEvents, handling partial lines, multibyte UTF-8, and rotations."""
         resolved = self._resolve_path(self.runtime_path)
-        if not resolved.exists() or resolved.stat().st_size == 0:
+        if not resolved.exists():
             return []
 
-        new_events: list[RuntimeEvent] = []
-        file_size = resolved.stat().st_size
+        try:
+            st = resolved.stat()
+        except OSError as exc:
+            logger.warning("Error stating runtime capture %s: %s", resolved, exc)
+            return []
 
-        if file_size < self._runtime_file_offset:
+        if st.st_size == 0:
+            return []
+
+        # Detect rotation or replacement (even if replacement file >= previous size)
+        current_id = (st.st_ino, getattr(st, "st_dev", 0), getattr(st, "st_ctime_ns", 0))
+        if self._runtime_file_id is not None and current_id != self._runtime_file_id:
+            logger.info("Runtime capture file replaced or rotated. Resetting offset.")
             self._runtime_file_offset = 0
             self._runtime_partial_buffer = ""
+            self._runtime_header_bytes = b""
 
+        self._runtime_file_id = current_id
+
+        # Detect in-place truncation
+        if st.st_size < self._runtime_file_offset:
+            self._runtime_file_offset = 0
+            self._runtime_partial_buffer = ""
+            self._runtime_header_bytes = b""
+
+        new_events: list[RuntimeEvent] = []
         try:
-            with resolved.open("r", encoding="utf-8", errors="replace") as handle:
+            with resolved.open("rb") as handle:
+                # Detect in-place rewrite of initial records
+                if self._runtime_file_offset > 0 and self._runtime_header_bytes:
+                    handle.seek(0)
+                    hdr = handle.read(len(self._runtime_header_bytes))
+                    if hdr != self._runtime_header_bytes:
+                        self._runtime_file_offset = 0
+                        self._runtime_partial_buffer = ""
+                        self._runtime_header_bytes = b""
+
                 handle.seek(self._runtime_file_offset)
-                chunk = handle.read()
+                chunk_bytes = handle.read()
                 self._runtime_file_offset = handle.tell()
-
-            if not chunk:
-                return []
-
-            full_data = self._runtime_partial_buffer + chunk
-            lines = full_data.split("\n")
-            self._runtime_partial_buffer = lines[-1]
-            complete_lines = lines[:-1]
-
-            for raw_line in complete_lines:
-                clean = raw_line.strip()
-                if not clean:
-                    continue
-                try:
-                    obj = json.loads(clean)
-                    event = RuntimeEvent.from_raw(obj)
-                    new_events.append(event)
-                    self._runtime_valid_events.append(event)
-                except (json.JSONDecodeError, SchemaError):
-                    self._runtime_malformed_count += 1
         except OSError as exc:
             logger.warning("Error reading runtime event capture %s: %s", resolved, exc)
             return []
+
+        if not chunk_bytes:
+            return []
+
+        combined_bytes = self._runtime_partial_buffer.encode("utf-8") + chunk_bytes
+        last_nl = combined_bytes.rfind(b"\n")
+        if last_nl == -1:
+            self._runtime_partial_buffer = combined_bytes.decode("utf-8", errors="replace")
+            return []
+
+        complete_bytes = combined_bytes[: last_nl + 1]
+        self._runtime_partial_buffer = combined_bytes[last_nl + 1 :].decode("utf-8", errors="replace")
+
+        if not self._runtime_header_bytes:
+            first_nl = complete_bytes.find(b"\n")
+            if first_nl != -1:
+                self._runtime_header_bytes = complete_bytes[: first_nl + 1]
+
+        decoded_text = complete_bytes.decode("utf-8", errors="replace")
+        for line in decoded_text.splitlines():
+            clean = line.strip()
+            if not clean:
+                continue
+            try:
+                obj = json.loads(clean)
+                event = RuntimeEvent.from_raw(obj)
+                new_events.append(event)
+                self._runtime_valid_events.append(event)
+            except (json.JSONDecodeError, SchemaError):
+                self._runtime_malformed_count += 1
 
         self._runtime_cumulative_count += len(new_events)
         return new_events
@@ -544,8 +684,7 @@ class LiveTelemetryEngine:
             if len(distinct_wl) > max_allowed_windows:
                 cutoff_wl = distinct_wl[-max_allowed_windows]
                 self._workload_valid_samples = [s for s in self._workload_valid_samples if window_start(s.timestamp) >= cutoff_wl]
-                cutoff_iso = isoformat_z(cutoff_wl)
-                self._workload_seen_lines = {k for k in self._workload_seen_lines if k.split("|")[0] >= cutoff_iso}
+                self._workload_seen_samples = {k for k in self._workload_seen_samples if k[0] >= cutoff_wl}
 
         # 3. Prune runtime events by distinct window starts
         if self._runtime_valid_events:
