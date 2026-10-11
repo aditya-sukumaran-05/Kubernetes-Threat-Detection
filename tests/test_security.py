@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import math
 import os
 import tomllib
@@ -11,7 +12,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import pandas as pd
-from experiments.run_experiment import activity_command, cpu_attack_command
+from experiments.run_experiment import (
+    activity_command,
+    cpu_attack_command,
+    run_scenario,
+    validate_experiment_preflight,
+)
 from ml.inference import InferenceSchemaError, ThreatDetector
 from telemetry.network_collector import build_network_gadget_command
 from telemetry.runtime_collector import build_runtime_gadget_command
@@ -528,3 +534,226 @@ def test_streamlit_config_hardened_for_localhost() -> None:
     assert cfg.get("server", {}).get("enableXsrfProtection") is True, "XSRF protection must be enabled"
     assert cfg.get("server", {}).get("enableCORS") is False, "CORS should be disabled"
     assert cfg.get("browser", {}).get("gatherUsageStats") is False, "Usage statistics collection must be disabled"
+
+
+# ---------------------------------------------------------------------------
+# 9. Experiment Preflight Validation and Output Containment
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def base_experiment_config() -> dict:
+    return {
+        "cluster": {
+            "expected_context": "minikube",
+            "namespace": "default",
+            "target_label": "app=webapp",
+            "target_workload": "deployment/webapp",
+        },
+        "output_directory": "experiments/runs",
+        "collectors": {
+            "network_gadget_version": "v0.55.1",
+            "workload_interval_seconds": 5,
+        },
+        "scenarios": {
+            "network_normal": {
+                "label": "normal",
+                "warmup_seconds": 20,
+                "activity_seconds": 60,
+                "cooldown_seconds": 20,
+                "network_activity": "low-rate HTTP requests",
+                "workload_activity": "baseline",
+                "network_requests": 30,
+                "request_delay_seconds": 2,
+            },
+            "network_attack": {
+                "label": "attack",
+                "warmup_seconds": 20,
+                "attack_seconds": 70,
+                "cooldown_seconds": 20,
+                "network_activity": "controlled high-rate HTTP connection burst",
+                "workload_activity": "baseline",
+                "network_requests": 120,
+                "network_duration_seconds": 70,
+            },
+            "workload_attack": {
+                "label": "attack",
+                "warmup_seconds": 20,
+                "attack_seconds": 70,
+                "cooldown_seconds": 20,
+                "network_activity": "low-rate HTTP requests",
+                "workload_activity": "controlled in-container CPU loop",
+                "network_requests": 30,
+                "request_delay_seconds": 2,
+            },
+        },
+    }
+
+
+def test_experiment_preflight_fails_before_write_or_subprocess_on_invalid_intervals_and_durations(
+    base_experiment_config: dict, tmp_path: Path
+) -> None:
+    bad_interval_values = [float("nan"), float("inf"), -5, 0, True, "not_numeric"]
+    for bad_val in bad_interval_values:
+        bad_cfg = copy.deepcopy(base_experiment_config)
+        bad_cfg["collectors"]["workload_interval_seconds"] = bad_val
+        with patch("subprocess.Popen") as mock_popen:
+            with pytest.raises((ValueError, TypeError)):
+                run_scenario(bad_cfg, "network_normal", project_root=tmp_path, execute=True)
+            mock_popen.assert_not_called()
+        assert not (tmp_path / "experiments").exists()
+
+    bad_durations = [float("nan"), float("inf"), -1, True]
+    for bad_val in bad_durations:
+        bad_cfg = copy.deepcopy(base_experiment_config)
+        bad_cfg["scenarios"]["network_normal"]["warmup_seconds"] = bad_val
+        with patch("subprocess.Popen") as mock_popen:
+            with pytest.raises((ValueError, TypeError)):
+                run_scenario(bad_cfg, "network_normal", project_root=tmp_path, execute=True)
+            mock_popen.assert_not_called()
+        assert not (tmp_path / "experiments").exists()
+
+    for bad_val in [float("nan"), float("inf"), -1, 0, True]:
+        bad_cfg = copy.deepcopy(base_experiment_config)
+        bad_cfg["scenarios"]["network_normal"]["activity_seconds"] = bad_val
+        with patch("subprocess.Popen") as mock_popen:
+            with pytest.raises((ValueError, TypeError)):
+                run_scenario(bad_cfg, "network_normal", project_root=tmp_path, execute=True)
+            mock_popen.assert_not_called()
+        assert not (tmp_path / "experiments").exists()
+
+    for bad_val in [float("nan"), float("inf"), -1, 0, True]:
+        bad_cfg = copy.deepcopy(base_experiment_config)
+        bad_cfg["scenarios"]["network_attack"]["attack_seconds"] = bad_val
+        with patch("subprocess.Popen") as mock_popen:
+            with pytest.raises((ValueError, TypeError)):
+                run_scenario(bad_cfg, "network_attack", project_root=tmp_path, execute=True)
+            mock_popen.assert_not_called()
+        assert not (tmp_path / "experiments").exists()
+
+    for bad_val in bad_durations:
+        bad_cfg = copy.deepcopy(base_experiment_config)
+        bad_cfg["scenarios"]["network_normal"]["cooldown_seconds"] = bad_val
+        with patch("subprocess.Popen") as mock_popen:
+            with pytest.raises((ValueError, TypeError)):
+                run_scenario(bad_cfg, "network_normal", project_root=tmp_path, execute=True)
+            mock_popen.assert_not_called()
+        assert not (tmp_path / "experiments").exists()
+
+
+def test_experiment_preflight_fails_before_write_or_subprocess_on_invalid_scenario_params(
+    base_experiment_config: dict, tmp_path: Path
+) -> None:
+    for bad_req in [float("nan"), float("inf"), -1, 0, True]:
+        bad_cfg = copy.deepcopy(base_experiment_config)
+        bad_cfg["scenarios"]["network_normal"]["network_requests"] = bad_req
+        with patch("subprocess.Popen") as mock_popen:
+            with pytest.raises((ValueError, TypeError)):
+                run_scenario(bad_cfg, "network_normal", project_root=tmp_path, execute=True)
+            mock_popen.assert_not_called()
+        assert not (tmp_path / "experiments").exists()
+
+    for bad_delay in [float("nan"), float("inf"), -1, True]:
+        bad_cfg = copy.deepcopy(base_experiment_config)
+        bad_cfg["scenarios"]["network_normal"]["request_delay_seconds"] = bad_delay
+        with patch("subprocess.Popen") as mock_popen:
+            with pytest.raises((ValueError, TypeError)):
+                run_scenario(bad_cfg, "network_normal", project_root=tmp_path, execute=True)
+            mock_popen.assert_not_called()
+        assert not (tmp_path / "experiments").exists()
+
+    for bad_dur in [float("nan"), float("inf"), -1, 0, True]:
+        bad_cfg = copy.deepcopy(base_experiment_config)
+        bad_cfg["scenarios"]["network_attack"]["network_duration_seconds"] = bad_dur
+        with patch("subprocess.Popen") as mock_popen:
+            with pytest.raises((ValueError, TypeError)):
+                run_scenario(bad_cfg, "network_attack", project_root=tmp_path, execute=True)
+            mock_popen.assert_not_called()
+        assert not (tmp_path / "experiments").exists()
+
+    # Missing required network_duration_seconds in network_attack
+    missing_cfg = copy.deepcopy(base_experiment_config)
+    del missing_cfg["scenarios"]["network_attack"]["network_duration_seconds"]
+    with patch("subprocess.Popen") as mock_popen:
+        with pytest.raises(KeyError, match="network_duration_seconds"):
+            run_scenario(missing_cfg, "network_attack", project_root=tmp_path, execute=True)
+        mock_popen.assert_not_called()
+    assert not (tmp_path / "experiments").exists()
+
+
+def test_experiment_preflight_fails_before_write_or_subprocess_on_invalid_k8s_identifiers(
+    base_experiment_config: dict, tmp_path: Path
+) -> None:
+    for bad_ns in ["--all-namespaces", "default; rm -rf /", "-n", ""]:
+        bad_cfg = copy.deepcopy(base_experiment_config)
+        bad_cfg["cluster"]["namespace"] = bad_ns
+        with patch("subprocess.Popen") as mock_popen:
+            with pytest.raises(ValueError):
+                run_scenario(bad_cfg, "network_normal", project_root=tmp_path, execute=True)
+            mock_popen.assert_not_called()
+        assert not (tmp_path / "experiments").exists()
+
+    for bad_workload in ["--all", "deployment/webapp | cat", ""]:
+        bad_cfg = copy.deepcopy(base_experiment_config)
+        bad_cfg["cluster"]["target_workload"] = bad_workload
+        with patch("subprocess.Popen") as mock_popen:
+            with pytest.raises(ValueError):
+                run_scenario(bad_cfg, "network_normal", project_root=tmp_path, execute=True)
+            mock_popen.assert_not_called()
+        assert not (tmp_path / "experiments").exists()
+
+    for bad_label in ["--evil", "app=webapp; evil", ""]:
+        bad_cfg = copy.deepcopy(base_experiment_config)
+        bad_cfg["cluster"]["target_label"] = bad_label
+        with patch("subprocess.Popen") as mock_popen:
+            with pytest.raises(ValueError):
+                run_scenario(bad_cfg, "network_normal", project_root=tmp_path, execute=True)
+            mock_popen.assert_not_called()
+        assert not (tmp_path / "experiments").exists()
+
+    # Missing cluster config key
+    missing_cfg = copy.deepcopy(base_experiment_config)
+    del missing_cfg["cluster"]["namespace"]
+    with patch("subprocess.Popen") as mock_popen:
+        with pytest.raises(KeyError):
+            run_scenario(missing_cfg, "network_normal", project_root=tmp_path, execute=True)
+        mock_popen.assert_not_called()
+    assert not (tmp_path / "experiments").exists()
+
+
+def test_experiment_preflight_fails_before_write_or_subprocess_on_escaping_output_dir(
+    base_experiment_config: dict, tmp_path: Path
+) -> None:
+    outside_dir = tmp_path.parent / "outside_directory"
+    for bad_dir in ["../../escaped_dir", "../outside", str(outside_dir), "", "   "]:
+        bad_cfg = copy.deepcopy(base_experiment_config)
+        bad_cfg["output_directory"] = bad_dir
+        with patch("subprocess.Popen") as mock_popen:
+            with pytest.raises(ValueError):
+                run_scenario(bad_cfg, "network_normal", project_root=tmp_path, execute=True)
+            mock_popen.assert_not_called()
+        assert not (tmp_path / "experiments").exists()
+
+
+def test_experiment_preflight_valid_plan_and_dry_run(
+    base_experiment_config: dict, tmp_path: Path
+) -> None:
+    plan = validate_experiment_preflight(base_experiment_config, "network_normal", tmp_path, execute=False)
+    assert plan.scenario == "network_normal"
+    assert plan.workload_interval_seconds == 5
+    assert plan.warmup_seconds == 20
+    assert plan.attack_seconds == 0.0
+    assert plan.cooldown_seconds == 20
+    assert str(plan.canonical_run_dir).startswith(str((tmp_path / "experiments" / "runs").resolve()))
+
+    attack_plan = validate_experiment_preflight(base_experiment_config, "network_attack", tmp_path, execute=False)
+    assert attack_plan.scenario == "network_attack"
+    assert attack_plan.attack_seconds == 70.0
+
+    # Dry run execution writes metadata without spawning collectors
+    with patch("subprocess.Popen") as mock_popen:
+        run_dir, metadata = run_scenario(base_experiment_config, "network_normal", project_root=tmp_path, execute=False)
+        mock_popen.assert_not_called()
+
+    assert metadata.status == "planned"
+    assert run_dir.is_dir()
+    assert (run_dir / "metadata.json").is_file()

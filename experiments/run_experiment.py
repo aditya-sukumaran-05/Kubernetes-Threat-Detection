@@ -12,6 +12,8 @@ from typing import Any
 
 import yaml
 
+from dataclasses import dataclass
+
 from experiments.orchestration import (
     RunMetadata,
     attack_window_report,
@@ -24,9 +26,12 @@ from experiments.orchestration import (
     write_metadata,
 )
 from telemetry.security import (
+    validate_gadget_version,
     validate_k8s_name,
+    validate_k8s_selector,
     validate_positive_float,
     validate_positive_int,
+    validate_safe_output_path,
 )
 
 CPU_ATTACK_PID_FILE = "/tmp/kubernetes-threat-detection-cpu-attack.pid"
@@ -103,18 +108,174 @@ def stop(process: subprocess.Popen[str] | None) -> None:
                 process.wait(timeout=5)
 
 
-def run_scenario(config: dict[str, Any], scenario: str, project_root: Path, execute: bool) -> tuple[Path, RunMetadata]:
-    if scenario not in config["scenarios"]:
+@dataclass(frozen=True)
+class ValidatedExperimentPlan:
+    """Preflight-validated experiment configuration and execution parameters."""
+
+    canonical_run_dir: Path
+    scenario: str
+    label: str
+    cluster: dict[str, Any]
+    definition: dict[str, Any]
+    collectors: dict[str, Any]
+    workload_interval_seconds: float
+    warmup_seconds: float
+    attack_seconds: float
+    cooldown_seconds: float
+
+
+def validate_experiment_preflight(
+    config: dict[str, Any],
+    scenario: str,
+    project_root: Path | str,
+    execute: bool = False,
+) -> ValidatedExperimentPlan:
+    """Perform strict preflight validation of all experiment configuration before file or process creation.
+
+    Validates:
+    - Top-level config sections ('cluster', 'output_directory', 'collectors', 'scenarios').
+    - Target scenario existence and completeness.
+    - Kubernetes namespace, workload, and context identifiers (preventing flag and command injection).
+    - Output directory boundaries and containment within project_root.
+    - Numerical parameters (warmup, cooldown, attack duration, collector intervals, requests, delays),
+      rejecting NaN, Inf, negative numbers, and booleans.
+    - Command builders (ensures activity_command and cpu_attack_command can construct without error).
+    """
+    if not isinstance(config, dict):
+        raise TypeError(f"config must be a dictionary, got {type(config).__name__}")
+
+    for section in ("cluster", "output_directory", "collectors", "scenarios"):
+        if section not in config:
+            raise KeyError(f"Missing required configuration section: {section!r}")
+
+    cluster = config["cluster"]
+    if not isinstance(cluster, dict):
+        raise TypeError("cluster section must be a dictionary")
+
+    for field in ("namespace", "target_workload", "expected_context"):
+        if field not in cluster:
+            raise KeyError(f"Missing required cluster field: {field!r}")
+
+    validate_k8s_name(cluster["namespace"], "namespace")
+    validate_k8s_name(cluster["target_workload"], "target_workload")
+    validate_k8s_name(cluster["expected_context"], "expected_context")
+    if "target_label" in cluster:
+        validate_k8s_selector(cluster["target_label"], "target_label")
+
+    collectors = config["collectors"]
+    if not isinstance(collectors, dict):
+        raise TypeError("collectors section must be a dictionary")
+
+    if "workload_interval_seconds" not in collectors:
+        raise KeyError("Missing required collectors field: 'workload_interval_seconds'")
+
+    workload_interval = validate_positive_float(
+        collectors["workload_interval_seconds"], "workload_interval_seconds", allow_zero=False
+    )
+    if "network_gadget_version" in collectors:
+        validate_gadget_version(collectors["network_gadget_version"])
+
+    scenarios = config["scenarios"]
+    if not isinstance(scenarios, dict):
+        raise TypeError("scenarios section must be a dictionary")
+
+    if scenario not in scenarios:
         raise ValueError(f"unknown scenario: {scenario}")
-    cluster, definition = config["cluster"], config["scenarios"][scenario]
-    run_dir = project_root / config["output_directory"] / experiment_id(scenario)
+
+    definition = scenarios[scenario]
+    if not isinstance(definition, dict):
+        raise TypeError(f"Scenario definition for '{scenario}' must be a dictionary")
+
+    for req_field in ("label", "network_activity", "workload_activity", "warmup_seconds", "cooldown_seconds"):
+        if req_field not in definition:
+            raise KeyError(f"Missing required scenario field in '{scenario}': {req_field!r}")
+
+    label = definition["label"]
+    if not isinstance(label, str) or not label.strip():
+        raise ValueError(f"label in scenario '{scenario}' must be a non-empty string")
+
+    warmup_seconds = validate_positive_float(
+        definition["warmup_seconds"], "warmup_seconds", allow_zero=True
+    )
+    cooldown_seconds = validate_positive_float(
+        definition["cooldown_seconds"], "cooldown_seconds", allow_zero=True
+    )
+
+    attack_seconds = 0.0
+    if "attack_seconds" in definition:
+        attack_seconds = validate_positive_float(
+            definition["attack_seconds"], "attack_seconds", allow_zero=False
+        )
+    elif scenario in {"workload_attack", "fusion_attack"}:
+        raise KeyError(f"Missing required field 'attack_seconds' in attack scenario '{scenario}'")
+
+    if "activity_seconds" in definition:
+        validate_positive_float(
+            definition["activity_seconds"], "activity_seconds", allow_zero=False
+        )
+
+    # Validate scenario-specific network parameters and command construction
+    if scenario in {"network_normal", "workload_normal", "workload_attack", "fusion_normal"}:
+        for net_field in ("network_requests", "request_delay_seconds"):
+            if net_field not in definition:
+                raise KeyError(f"Missing required field {net_field!r} in scenario '{scenario}'")
+        validate_positive_int(definition["network_requests"], "network_requests", allow_zero=False)
+        validate_positive_float(definition["request_delay_seconds"], "request_delay_seconds", allow_zero=True)
+    elif scenario in {"network_attack", "fusion_attack"}:
+        if "network_duration_seconds" not in definition:
+            raise KeyError(f"Missing required field 'network_duration_seconds' in scenario '{scenario}'")
+        validate_positive_int(definition["network_duration_seconds"], "network_duration_seconds", allow_zero=False)
+        if "network_requests" in definition:
+            validate_positive_int(definition["network_requests"], "network_requests", allow_zero=False)
+
+    activity_command(scenario, config, cluster)
+    if scenario in {"workload_attack", "fusion_attack"}:
+        cpu_attack_command(cluster)
+
+    # Enforce strict output directory containment within project_root
+    raw_output_dir = config["output_directory"]
+    if not raw_output_dir or (isinstance(raw_output_dir, str) and not raw_output_dir.strip()):
+        raise ValueError("output_directory cannot be empty")
+
+    resolved_root = Path(project_root).resolve()
+    output_root = validate_safe_output_path(
+        raw_output_dir, base_dir=resolved_root, allowed_roots=[resolved_root]
+    )
+
+    run_id = experiment_id(scenario)
+    canonical_run_dir = validate_safe_output_path(
+        output_root / run_id, base_dir=output_root, allowed_roots=[output_root]
+    )
+
+    return ValidatedExperimentPlan(
+        canonical_run_dir=canonical_run_dir,
+        scenario=scenario,
+        label=label,
+        cluster=cluster,
+        definition=definition,
+        collectors=collectors,
+        workload_interval_seconds=workload_interval,
+        warmup_seconds=warmup_seconds,
+        attack_seconds=attack_seconds,
+        cooldown_seconds=cooldown_seconds,
+    )
+
+
+def run_scenario(config: dict[str, Any], scenario: str, project_root: Path, execute: bool) -> tuple[Path, RunMetadata]:
+    # 1. Strict preflight validation runs BEFORE any directory creation, file write, or subprocess
+    plan = validate_experiment_preflight(config, scenario, project_root, execute=execute)
+    run_dir = plan.canonical_run_dir
+    cluster = plan.cluster
+    definition = plan.definition
+
+    # 2. Construct RunMetadata using preflight-validated values
     metadata = RunMetadata(
         experiment_id=run_dir.name,
         scenario=scenario,
-        label=definition["label"],
+        label=plan.label,
         namespace=cluster["namespace"],
         target_workload=cluster["target_workload"],
-        collector_config=config["collectors"],
+        collector_config=plan.collectors,
         network_activity=definition["network_activity"],
         workload_activity=definition["workload_activity"],
         notes="Planned by the reproducible experiment runner.",
@@ -126,6 +287,8 @@ def run_scenario(config: dict[str, Any], scenario: str, project_root: Path, exec
         metadata.record("dry run only; pass --execute to start controlled local activity")
         save_metadata(run_dir, metadata)
         return run_dir, metadata
+
+    # 3. Minikube context check for execution mode
     if not minikube_context_is_active(cluster["expected_context"]):
         metadata.status = "refused_non_minikube_context"
         metadata.record("refused: active Kubernetes context did not equal configured Minikube context")
@@ -142,20 +305,15 @@ def run_scenario(config: dict[str, Any], scenario: str, project_root: Path, exec
             [sys.executable, "telemetry/network_collector.py", "--output", str(run_dir / "network.jsonl")],
             cwd=project_root, stdout=events_log, stderr=subprocess.STDOUT, text=True,
         )
-        workload_interval = validate_positive_float(
-            config["collectors"]["workload_interval_seconds"], "workload_interval_seconds"
-        )
-        warmup_seconds = validate_positive_float(
-            definition.get("warmup_seconds", 0), "warmup_seconds", allow_zero=True
-        )
-        attack_seconds = validate_positive_float(
-            definition.get("attack_seconds", 0), "attack_seconds", allow_zero=True
-        )
-        cooldown_seconds = validate_positive_float(
-            definition.get("cooldown_seconds", 0), "cooldown_seconds", allow_zero=True
-        )
         workload_collector = subprocess.Popen(
-            [sys.executable, "telemetry/workload_collector.py", "--output", str(run_dir / "workload.csv"), "--interval", str(workload_interval)],
+            [
+                sys.executable,
+                "telemetry/workload_collector.py",
+                "--output",
+                str(run_dir / "workload.csv"),
+                "--interval",
+                str(plan.workload_interval_seconds),
+            ],
             cwd=project_root, stdout=events_log, stderr=subprocess.STDOUT, text=True,
         )
         time.sleep(2)
@@ -163,7 +321,7 @@ def run_scenario(config: dict[str, Any], scenario: str, project_root: Path, exec
             raise RuntimeError("a collector exited before confirmation")
         metadata.record("network and workload collectors confirmed running")
         save_metadata(run_dir, metadata)
-        time.sleep(warmup_seconds)
+        time.sleep(plan.warmup_seconds)
 
         command = activity_command(scenario, config, cluster)
         if scenario in {"network_attack", "fusion_attack"}:
@@ -181,7 +339,7 @@ def run_scenario(config: dict[str, Any], scenario: str, project_root: Path, exec
             if scenario not in {"network_attack", "fusion_attack"}:
                 metadata.record("normal traffic started")
         if attack_workload:
-            time.sleep(attack_seconds)
+            time.sleep(plan.attack_seconds)
             stop(attack_workload)
             cpu_cleanup_error = stop_cpu_attack(cluster)
             metadata.workload_attack_end_time_utc = utc_now()
@@ -192,7 +350,7 @@ def run_scenario(config: dict[str, Any], scenario: str, project_root: Path, exec
                 metadata.network_attack_end_time_utc = utc_now()
                 metadata.record("network burst ended", metadata.network_attack_end_time_utc)
         metadata.attack_end_time_utc = max(filter(None, [metadata.network_attack_end_time_utc, metadata.workload_attack_end_time_utc]), default=None)
-        time.sleep(cooldown_seconds)
+        time.sleep(plan.cooldown_seconds)
         metadata.experiment_end_time_utc = metadata.record("experiment capture ended")
         metadata.status = "completed"
     except KeyboardInterrupt:
