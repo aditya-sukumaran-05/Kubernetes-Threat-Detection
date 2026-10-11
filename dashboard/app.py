@@ -57,7 +57,7 @@ def build_app() -> None:
     nav_icons = {
         NAV_LIVE: "📡 Live Threat Monitoring",
         NAV_RESEARCH: "🔬 Research & Diagnostics",
-        NAV_ALERTS: "📋 Alert History & Telemetry Health",
+        NAV_ALERTS: "📋 Active Buffer Alert View & Health",
         NAV_REPLAY: "📼 Historical Replay & Testing",
     }
     selected_mode = st.sidebar.radio(

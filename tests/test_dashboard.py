@@ -313,3 +313,65 @@ def test_dashboard_live_capture_filter_and_window_navigation() -> None:
     slider.set_value(1)
     at.run(timeout=15)
     assert not at.exception
+
+
+def test_live_capture_stale_telemetry_banner(tmp_path: Path) -> None:
+    """Verify that live capture renders an explicit inactive/stale banner when telemetry is old."""
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    stale_ts = (datetime.now(timezone.utc) - timedelta(seconds=120)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    net_file = tmp_path / "stale_network.jsonl"
+    event_json = {
+        "timestamp": stale_ts,
+        "type": "accept",
+        "src": {"addr": "10.244.0.5", "port": 54321},
+        "dst": {"addr": "10.244.0.2", "port": 80},
+        "k8s": {"podName": "webapp-stale", "namespace": "default"},
+        "error": None,
+    }
+    net_file.write_text(json.dumps(event_json) + "\n", encoding="utf-8")
+
+    empty_wl = tmp_path / "empty_wl.csv"
+    empty_wl.write_text("timestamp,pod,cpu_millicores,memory_mib,label\n", encoding="utf-8")
+
+    script = f'''
+import sys
+from pathlib import Path
+root = Path(".").resolve()
+if str(root) not in sys.path:
+    sys.path.insert(0, str(root))
+from dashboard.components.live_capture import render_live_capture
+from ml.inference import ThreatDetector
+det = ThreatDetector()
+render_live_capture(det, "random_forest", capture_path=Path(r"{net_file.as_posix()}"), workload_path=Path(r"{empty_wl.as_posix()}"), selected_modality="network")
+'''
+    script_file = tmp_path / "run_stale.py"
+    script_file.write_text(script, encoding="utf-8")
+    at = AppTest.from_file(str(script_file))
+    at.run(timeout=25)
+    assert not at.exception
+    # Verify stale warning banner is displayed
+    assert any("TELEMETRY INACTIVE / STALE" in w.value for w in at.warning)
+    assert any("Historical / Stale Window" in info.value for info in at.info)
+
+
+def test_alert_history_buffer_export_scoping() -> None:
+    """Verify that Alert History view scopes export captions and shares engine in session state."""
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    at.sidebar.radio[0].set_value(NAV_ALERTS)
+    at.run(timeout=25)
+
+    assert not at.exception
+    # Verify Active Buffer subheaders and temporal range caption
+    subheaders = [s.value for s in at.subheader]
+    assert any("Export Evaluated Records (Active Buffer)" in s for s in subheaders)
+    assert any("Active Buffer Threat Incident Alerts Log" in s for s in subheaders)
+    assert any("Temporal buffer range:" in c.value for c in at.caption)
+
+    # Verify session state retains shared live engine
+    all_keys = set(at.session_state._state._new_session_state.keys()) | set(at.session_state._state._old_state.keys())
+    shared_engine_keys = [k for k in all_keys if str(k).startswith("live_engine_")]
+    assert len(shared_engine_keys) >= 1

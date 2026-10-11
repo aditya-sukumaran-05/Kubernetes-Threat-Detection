@@ -255,13 +255,36 @@ def render_live_capture(
             st.metric("Latest Window UTC", latest_record.window_start[-9:-1] if latest_record.window_start else "N/A")
 
     # 7. Prominent Latest Verdict Banner with Prediction vs Malicious Activity distinction
-    st.markdown("#### 🚨 Latest Live Observation Window Verdict")
+    # Calculate age of latest observation window relative to wall-clock UTC
+    is_latest_stale = False
+    window_age_seconds: float = 0.0
+    try:
+        dt_end = datetime.fromisoformat(latest_record.window_end.replace("Z", "+00:00"))
+        now_utc = datetime.now(timezone.utc)
+        window_age_seconds = max(0.0, (now_utc - dt_end).total_seconds())
+        if window_age_seconds > 60.0:
+            is_latest_stale = True
+    except Exception:
+        pass
+
+    if is_latest_stale:
+        st.markdown(f"#### ⚠️ Telemetry Inactive / Stale: Most Recent Evaluated Window (Recorded {int(window_age_seconds)}s ago)")
+        st.warning(
+            f"⚠️ **TELEMETRY INACTIVE / STALE:** Telemetry ingestion is currently idle or suspended. "
+            f"The latest observation window (`{latest_record.window_start}`) concluded {int(window_age_seconds)}s ago. "
+            f"This verdict reflects past telemetry and does NOT represent real-time cluster status.",
+            icon="⚠️",
+        )
+    else:
+        st.markdown("#### 🚨 Latest Live Observation Window Verdict (Live)")
+
     if latest_inf is not None:
         att_prob_str = format_probability(latest_inf.attack_probability)
         conf_str = format_probability(latest_inf.confidence)
+        stale_tag = " (Historical / Stale Window)" if is_latest_stale else ""
         if latest_inf.predicted_label == "attack":
             st.error(
-                f"🚨 **PREDICTED THREAT DETECTED** in Window `{latest_record.window_start}` "
+                f"🚨 **PREDICTED THREAT DETECTED{stale_tag}** in Window `{latest_record.window_start}` "
                 f"({latest_inf.modality.title()} — {latest_inf.model_name.replace('_', ' ').title()})\n\n"
                 f"• **Predicted Label:** ATTACK\n"
                 f"• **Attack Probability:** {att_prob_str}\n"
@@ -275,15 +298,26 @@ def render_live_capture(
                 "Security operators must verify cluster logs before initiating containment procedures.*"
             )
         else:
-            st.success(
-                f"✅ **PREDICTED NORMAL WORKLOAD** in Window `{latest_record.window_start}` "
-                f"({latest_inf.modality.title()} — {latest_inf.model_name.replace('_', ' ').title()})\n\n"
-                f"• **Predicted Label:** NORMAL\n"
-                f"• **Attack Probability:** {att_prob_str}\n"
-                f"• **Model Confidence:** {conf_str}\n"
-                f"• **Status:** Conforms to benign application baseline.",
-                icon="✅",
-            )
+            if is_latest_stale:
+                st.info(
+                    f"ℹ️ **PREDICTED NORMAL WORKLOAD{stale_tag}** in Window `{latest_record.window_start}` "
+                    f"({latest_inf.modality.title()} — {latest_inf.model_name.replace('_', ' ').title()})\n\n"
+                    f"• **Predicted Label:** NORMAL\n"
+                    f"• **Attack Probability:** {att_prob_str}\n"
+                    f"• **Model Confidence:** {conf_str}\n"
+                    f"• **Status:** Conforms to benign application baseline.",
+                    icon="ℹ️",
+                )
+            else:
+                st.success(
+                    f"✅ **PREDICTED NORMAL WORKLOAD** in Window `{latest_record.window_start}` "
+                    f"({latest_inf.modality.title()} — {latest_inf.model_name.replace('_', ' ').title()})\n\n"
+                    f"• **Predicted Label:** NORMAL\n"
+                    f"• **Attack Probability:** {att_prob_str}\n"
+                    f"• **Model Confidence:** {conf_str}\n"
+                    f"• **Status:** Conforms to benign application baseline.",
+                    icon="✅",
+                )
             st.caption("ℹ️ *Observed socket activity and workload dynamics match expected benign application baselines.*")
     else:
         if selected_modality == "fusion" and not latest_record.is_fused:

@@ -96,6 +96,21 @@ def _get_file_identity(st: os.stat_result) -> tuple:
     return (0, getattr(st, "st_dev", 0))
 
 
+def _compute_feature_fingerprint(features: dict[str, Any] | None) -> tuple:
+    """Compute an immutable content fingerprint of window features for cache invalidation."""
+    if not features:
+        return ()
+    items = []
+    for k, v in features.items():
+        if isinstance(v, (int, float)):
+            items.append((k, round(float(v), 6)))
+        elif isinstance(v, (list, tuple)):
+            items.append((k, tuple(v)))
+        else:
+            items.append((k, str(v)))
+    return tuple(sorted(items))
+
+
 @dataclass
 class CollectorHealth:
     """Operational status of a live telemetry stream collector."""
@@ -132,6 +147,8 @@ class LiveWindowRecord:
     fusion_inferences: dict[str, InferenceResult] = field(default_factory=dict)
     last_inferred_net_event_count: int = -1
     last_inferred_wl_sample_count: int = -1
+    last_net_fingerprint: tuple = ()
+    last_wl_fingerprint: tuple = ()
 
     @property
     def is_fused(self) -> bool:
@@ -798,28 +815,32 @@ class LiveTelemetryEngine:
 
             record = self.windows[start]
 
-            # Update feature references and invalidate cache if event counts changed dynamically
+            # Update feature references and invalidate cache if event counts or feature values changed dynamically
             if net_win:
                 net_count = int(net_win.get("network_event_count", 0))
+                net_fp = _compute_feature_fingerprint(net_win)
                 record.network_available = True
                 record.network_features = net_win
                 if net_win.get("affected_pods"):
                     record.affected_pods = str(net_win["affected_pods"])
-                if record.last_inferred_net_event_count != net_count:
+                if record.last_inferred_net_event_count != net_count or record.last_net_fingerprint != net_fp:
                     record.network_inferences.clear()
                     record.fusion_inferences.clear()
                     record.last_inferred_net_event_count = net_count
+                    record.last_net_fingerprint = net_fp
 
             if wl_win:
                 wl_count = int(wl_win.get("workload_sample_count", 0))
+                wl_fp = _compute_feature_fingerprint(wl_win)
                 record.workload_available = True
                 record.workload_features = wl_win
                 if not record.affected_pods and wl_win.get("affected_pods"):
                     record.affected_pods = str(wl_win["affected_pods"])
-                if record.last_inferred_wl_sample_count != wl_count:
+                if record.last_inferred_wl_sample_count != wl_count or record.last_wl_fingerprint != wl_fp:
                     record.workload_inferences.clear()
                     record.fusion_inferences.clear()
                     record.last_inferred_wl_sample_count = wl_count
+                    record.last_wl_fingerprint = wl_fp
 
             # Attach runtime events and features for this window
             rev_list = runtime_events_by_start.get(start)

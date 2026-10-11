@@ -73,16 +73,51 @@ def render_research_diagnostics(project_root: Path | str | None = None) -> None:
         )
         return
 
+    # Derive headline metrics dynamically from loaded LOSO artifacts
+    fusion_rows = [r for r in loso_rows if str(r.get("telemetry", "")).strip().lower() == "fusion"]
+    target_rows = fusion_rows if fusion_rows else loso_rows
+
+    total_folds_val = max((int(r.get("total_folds", 0)) for r in target_rows if str(r.get("total_folds", "")).isdigit()), default=0)
+    total_samples_val = max((int(r.get("total_samples", 0)) for r in target_rows if str(r.get("total_samples", "")).isdigit()), default=0)
+
+    best_row = None
+    best_f1_val = -1.0
+    for r in target_rows:
+        try:
+            f1_cand = float(r.get("aggregate_f1", -1.0))
+            if f1_cand > best_f1_val:
+                best_f1_val = f1_cand
+                best_row = r
+        except (ValueError, TypeError):
+            continue
+
+    if best_row is not None and best_f1_val >= 0.0:
+        try:
+            best_fpr_val = float(best_row.get("aggregate_false_positive_rate", 0.0))
+            best_fpr_str = f"{best_fpr_val:.3f} ({best_fpr_val * 100:.1f}%)"
+        except (ValueError, TypeError):
+            best_fpr_str = "N/A"
+        best_model_name = str(best_row.get("model", "N/A")).replace("_", " ").title()
+        best_f1_str = f"{best_f1_val:.3f} ({best_f1_val * 100:.1f}%)"
+        f1_help = f"{best_model_name} under 24-fold LOSO cross-validation"
+    else:
+        best_f1_str = "N/A"
+        best_fpr_str = "N/A"
+        f1_help = "No valid evaluation metrics"
+
+    folds_str = f"{total_folds_val} Folds" if total_folds_val > 0 else "N/A"
+    samples_str = f"{total_samples_val} Fused Windows" if total_samples_val > 0 else "N/A"
+
     # High-level Summary Metrics
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.metric("Total LOSO Folds", "24 Folds", help="Each session held out once for unbiased testing")
+        st.metric("Total LOSO Folds", folds_str, help="Each session held out once for unbiased testing")
     with c2:
-        st.metric("Total Evaluated Windows", "122 Fused Windows", help="All synchronized 10-second campaign windows")
+        st.metric("Total Evaluated Windows", samples_str, help="All synchronized 10-second campaign windows")
     with c3:
-        st.metric("Best Multimodal F1", "0.929 (92.9%)", help="Random Forest under 24-fold LOSO")
+        st.metric("Best Multimodal F1", best_f1_str, help=f1_help)
     with c4:
-        st.metric("Multimodal FPR", "0.021 (2.1%)", help="False positive rate under Multimodal Fusion")
+        st.metric("Multimodal FPR", best_fpr_str, help="False positive rate under Multimodal Fusion")
 
     st.markdown("---")
 
@@ -154,19 +189,30 @@ def render_research_diagnostics(project_root: Path | str | None = None) -> None:
     # 5. Single-Session Holdout Latency Benchmarks
     ablation_json = _load_ablation_json(results_dir)
     if ablation_json and "experiments" in ablation_json:
-        with st.expander("⏱️ Inference Latency & Computational Overhead Benchmarks", expanded=False):
-            st.caption("Measured inference and training execution time per model from single-session holdout ablation.")
+        with st.expander("⏱️ Inference Latency & Computational Overhead Benchmarks (Single-Session Holdout)", expanded=False):
+            st.caption(
+                "Measured inference and training execution time per model from single-session holdout ablation. "
+                "Notice: These benchmarks evaluate a single held-out test session, distinct from the 24-fold LOSO cross-validation above."
+            )
             bench_rows = []
             for exp in ablation_json["experiments"]:
-                inf_time_ms = (exp.get("inference_time_per_sample_seconds") or 0.0) * 1000.0
-                train_time_s = exp.get("training_time_seconds") or 0.0
+                inf_time = exp.get("inference_time_per_sample_seconds")
+                train_time = exp.get("training_time_seconds")
+                acc = exp.get("accuracy")
+                fpr = exp.get("false_positive_rate")
+
+                inf_str = f"{float(inf_time) * 1000.0:.3f} ms" if inf_time is not None else "N/A"
+                train_str = f"{float(train_time):.3f} s" if train_time is not None else "N/A"
+                acc_str = f"{float(acc) * 100:.1f}%" if acc is not None else "N/A"
+                fpr_str = f"{float(fpr) * 100:.1f}%" if fpr is not None else "N/A"
+
                 bench_rows.append({
                     "Modality": exp.get("telemetry", "").title(),
                     "Model": exp.get("model", "").replace("_", " ").title(),
-                    "Inference Latency (ms/sample)": f"{inf_time_ms:.3f} ms",
-                    "Training Duration (s)": f"{train_time_s:.3f} s",
-                    "Test Accuracy": f"{(exp.get('accuracy') or 0.0) * 100:.1f}%",
-                    "Test FPR": f"{(exp.get('false_positive_rate') or 0.0) * 100:.1f}%",
+                    "Inference Latency (ms/sample)": inf_str,
+                    "Training Duration (s)": train_str,
+                    "Test Accuracy": acc_str,
+                    "Test FPR": fpr_str,
                 })
             st.dataframe(pd.DataFrame(bench_rows), width="stretch", hide_index=True)
 

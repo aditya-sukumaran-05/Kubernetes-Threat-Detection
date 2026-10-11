@@ -454,4 +454,43 @@ def test_live_engine_stale_telemetry_correctly_identified(tmp_path: Path) -> Non
     assert "Clock skew" not in health.status_message
 
 
+def test_live_engine_cache_invalidation_on_feature_fingerprint_change(tmp_path: Path) -> None:
+    """Verify that cached inferences are invalidated when feature content changes even if count is equal."""
+    net_file = tmp_path / "network_events.jsonl"
+    wl_file = tmp_path / "workload_metrics.csv"
+    net_file.write_text(
+        _make_raw_net_event("2026-10-10T10:00:01.000Z", port=11111) + "\n",
+        encoding="utf-8",
+    )
 
+    mock_detector = MagicMock(spec=ThreatDetector)
+    mock_detector.predict.return_value = InferenceResult(
+        predicted_label="normal",
+        attack_probability=0.05,
+        confidence=0.95,
+        window_start="2026-10-10T10:00:00.000Z",
+        window_end="2026-10-10T10:00:10.000Z",
+        modality="network",
+        model_name="random_forest",
+        evidence={"feature_values": {}},
+        affected_pods="webapp-live-test",
+    )
+
+    engine = LiveTelemetryEngine(detector=mock_detector, network_path=net_file, workload_path=wl_file)
+    records_1 = engine.process_live_telemetry("random_forest")
+    assert len(records_1) == 1
+    assert mock_detector.predict.call_count == 1
+
+    # Second pass without changes: hits cache
+    records_2 = engine.process_live_telemetry("random_forest")
+    assert mock_detector.predict.call_count == 1
+
+    # Now mutate the event in-place so extracted features change while sample count remains 1
+    from telemetry.schemas import NetworkEvent
+    # Change event type to 'error' (alters error_count and accept_count features while count is still 1)
+    engine._network_valid_events[0] = NetworkEvent.from_raw(
+        json.loads(_make_raw_net_event("2026-10-10T10:00:01.000Z", event_type="error"))
+    )
+    records_3 = engine.process_live_telemetry("random_forest")
+    # Because feature fingerprint changed even though event count is still 1, cache was invalidated!
+    assert mock_detector.predict.call_count == 2

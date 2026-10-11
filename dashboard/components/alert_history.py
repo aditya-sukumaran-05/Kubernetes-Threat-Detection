@@ -1,7 +1,7 @@
-"""Alert history and telemetry data health component for Streamlit dashboard.
+"""Active buffer alert view and telemetry data health component for Streamlit dashboard.
 
-Displays persistent alert logs, export facilities (CSV/JSON), and collector
-health diagnostics without inventing records or fabricating data.
+Displays active in-memory alert logs (retained up to 50 observation windows), export facilities (CSV/JSON),
+and collector health diagnostics without inventing records or claiming persistent database storage.
 """
 
 from __future__ import annotations
@@ -31,20 +31,33 @@ def render_alert_history(
     workload_path: Path | str = DEFAULT_WORKLOAD_PATH,
     runtime_path: Path | str = DEFAULT_RUNTIME_PATH,
 ) -> None:
-    """Render the Alert History & Telemetry Health view."""
-    st.header("📋 Alert History & Telemetry Health")
-    st.markdown(
-        "Inspect persistent detection alerts, verify collector process health, and export "
-        "verified observation records for incident response auditing."
+    """Render the Active Buffer Alert View & Telemetry Health view."""
+    st.header("📋 Active Buffer Alert View & Telemetry Health")
+    st.caption(
+        "Inspect active in-memory detection alerts (retaining up to 50 observation windows), "
+        "verify collector process health, and export bounded observation records for auditing. "
+        "*(Note: This view displays the active in-memory telemetry buffer, not a persistent database.)*"
     )
 
-    # 1. Initialize or query live engine
-    engine = LiveTelemetryEngine(
-        detector=detector,
-        network_path=capture_path,
-        workload_path=workload_path,
-        runtime_path=runtime_path,
-    )
+    # 1. Retrieve or initialize persistent LiveTelemetryEngine in session state
+    raw_net_path = Path(capture_path)
+    raw_wl_path = Path(workload_path)
+    raw_rt_path = Path(runtime_path)
+
+    resolved_net_path = raw_net_path if raw_net_path.is_absolute() else (detector.project_root / raw_net_path).resolve()
+    resolved_wl_path = raw_wl_path if raw_wl_path.is_absolute() else (detector.project_root / raw_wl_path).resolve()
+    resolved_rt_path = raw_rt_path if raw_rt_path.is_absolute() else (detector.project_root / raw_rt_path).resolve()
+
+    engine_key = f"live_engine_{resolved_net_path}_{resolved_wl_path}_{resolved_rt_path}"
+    if engine_key not in st.session_state:
+        st.session_state[engine_key] = LiveTelemetryEngine(
+            detector=detector,
+            network_path=resolved_net_path,
+            workload_path=resolved_wl_path,
+            runtime_path=resolved_rt_path,
+        )
+
+    engine: LiveTelemetryEngine = st.session_state[engine_key]
     # Incrementally ingest current records
     records = engine.process_live_telemetry(model_name="random_forest")
 
@@ -122,8 +135,8 @@ def render_alert_history(
                     alert_rows.append(record_entry)
 
     # 4. Active Threat Alerts Table
-    st.subheader("🚨 Threat Incident Alerts Log")
-    st.caption("Displays observation windows flagged as anomalous or attack behavior by active ML models.")
+    st.subheader("🚨 Active Buffer Threat Incident Alerts Log")
+    st.caption("Displays observation windows in the active in-memory buffer flagged as anomalous or attack behavior by active ML models.")
 
     c_filter1, c_filter2 = st.columns([2, 1])
     with c_filter1:
@@ -142,8 +155,17 @@ def render_alert_history(
 
     # 5. Data Export Facility (CSV / JSON)
     st.markdown("---")
-    st.subheader("📥 Export Evaluated Records")
-    st.caption("Export threat alerts and observation telemetry for security auditing, SIEM ingestion, or academic reports.")
+    st.subheader("📥 Export Evaluated Records (Active Buffer)")
+
+    buf_start_str = records[0].window_start if records else "empty"
+    buf_end_str = records[-1].window_end if records else "empty"
+    st.caption(
+        f"Export bounded observation records from active in-memory buffer "
+        f"(Temporal buffer range: `{buf_start_str}` to `{buf_end_str}`) for incident response auditing or academic reports."
+    )
+
+    clean_start = buf_start_str.replace(":", "").replace("-", "").replace(".", "")[:15]
+    clean_end = buf_end_str.replace(":", "").replace("-", "").replace(".", "")[:15]
 
     exp_col1, exp_col2 = st.columns(2)
     with exp_col1:
@@ -153,9 +175,9 @@ def render_alert_history(
             st.download_button(
                 label="📥 Download Threat Alerts (CSV)",
                 data=csv_buf.getvalue(),
-                file_name=f"k8s_threat_alerts_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv",
+                file_name=f"k8s_threat_alerts_buffer_{clean_start}_to_{clean_end}.csv",
                 mime="text/csv",
-                help="Download filtered alert incidents as CSV.",
+                help="Download filtered alert incidents from the active buffer as CSV.",
             )
         else:
             st.button("📥 Download Threat Alerts (CSV)", disabled=True, help="No threat alerts available to export.")
@@ -166,9 +188,9 @@ def render_alert_history(
             st.download_button(
                 label="📥 Download All Evaluated Windows (JSON)",
                 data=json_str,
-                file_name=f"k8s_telemetry_windows_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json",
+                file_name=f"k8s_active_buffer_windows_{clean_start}_to_{clean_end}.json",
                 mime="application/json",
-                help="Download all observation window records as JSON.",
+                help="Download all observation window records from the active buffer as JSON.",
             )
         else:
             st.button("📥 Download All Evaluated Windows (JSON)", disabled=True, help="No records available to export.")
