@@ -193,11 +193,11 @@ def build_app() -> None:
 
             # Window navigation slider
             current_slider_val = min(max(1, st.session_state[slider_key]), len(windows))
+            st.session_state[slider_key] = current_slider_val
             window_slider_val = st.slider(
                 f"Step Through Observation Windows: Window {current_slider_val} of {len(windows)}",
                 min_value=1,
                 max_value=len(windows),
-                value=current_slider_val,
                 key=slider_key,
                 help="Slide to inspect consecutive 10-second observation windows.",
             )

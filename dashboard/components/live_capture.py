@@ -345,7 +345,23 @@ def render_live_capture(
                         f"Verdict: **{status_badge}** {prob_str}"
                     )
         else:
-            st.info(f"ℹ️ Awaiting telemetry evaluation for modality '{selected_modality}' in latest window `{latest_record.window_start}`.")
+            if selected_modality == "network" and not latest_record.network_available:
+                last_net_rec = next((r for r in reversed(records) if r.network_available), None)
+                st.info(
+                    f"ℹ️ **Network Telemetry Idle:** No TCP socket events were recorded in latest window `{latest_record.window_start}`. "
+                    f"Inspektor Gadget is active and listening for webapp traffic."
+                )
+                if last_net_rec and last_net_rec.network_inferences.get(selected_model):
+                    last_net_inf = last_net_rec.network_inferences[selected_model]
+                    status_badge = "🚨 ATTACK" if last_net_inf.predicted_label == "attack" else "✅ NORMAL"
+                    st.caption(
+                        f"📊 **Most Recent Evaluated Network Window:** `{last_net_rec.window_start}` — "
+                        f"Verdict: **{status_badge}** ({format_probability(last_net_inf.attack_probability)})"
+                    )
+            elif selected_modality == "workload" and not latest_record.workload_available:
+                st.info(f"ℹ️ **Workload Telemetry Incomplete:** No Metrics Server samples were captured in window `{latest_record.window_start}`.")
+            else:
+                st.info(f"ℹ️ Awaiting telemetry evaluation for modality '{selected_modality}' in latest window `{latest_record.window_start}`.")
 
     # 8. Recent Detection History Table (Multi-Modality Breakdown)
     st.markdown("---")
@@ -474,14 +490,15 @@ def render_live_capture(
         with insp_col1:
             # Sync slider state
             default_slider_val = target_idx + 1
-            if "live_window_slider" in st.session_state and st.session_state["live_track_latest"]:
+            if "live_window_slider" not in st.session_state:
+                st.session_state["live_window_slider"] = default_slider_val
+            elif st.session_state["live_track_latest"]:
                 st.session_state["live_window_slider"] = default_slider_val
 
             slider_val = st.slider(
                 "Select Window to Inspect:",
                 min_value=1,
                 max_value=total_windows,
-                value=min(default_slider_val, total_windows),
                 key="live_window_slider",
                 help="Slide to inspect any historical or recent observation window.",
             )
