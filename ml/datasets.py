@@ -13,7 +13,17 @@ from typing import Iterable
 
 NETWORK_PREFIX = "network_"
 WORKLOAD_PREFIX = "workload_"
-CONTEXT_COLUMNS = ("window_start", "window_end", "capture_id", "session_id", "experiment_id", "scenario", "label", "attack_type")
+CONTEXT_COLUMNS = (
+    "window_start",
+    "window_end",
+    "cluster_id",
+    "capture_id",
+    "session_id",
+    "experiment_id",
+    "scenario",
+    "label",
+    "attack_type",
+)
 NETWORK_SCENARIOS = frozenset({"network_normal", "network_attack"})
 WORKLOAD_SCENARIOS = frozenset({"workload_normal", "workload_attack"})
 FUSION_SCENARIOS = frozenset({"fusion_normal", "fusion_attack"})
@@ -34,6 +44,7 @@ class DatasetSummary:
     features: tuple[str, ...]
     sha256: str
     limitation: str | None = None
+    cluster_counts: dict[str, int] | None = None
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
@@ -44,11 +55,20 @@ def read_csv(path: Path) -> list[dict[str, str]]:
 
 
 def _validate_unique_windows(rows: Iterable[dict[str, str]], source_name: str) -> None:
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
+    capture_clusters: dict[str, str] = {}
     for row in rows:
-        key = (row.get("capture_id", ""), row.get("window_start", ""))
-        if not all(key):
+        cluster = row.get("cluster_id") or "minikube"
+        capture = row.get("capture_id", "")
+        start = row.get("window_start", "")
+        if not capture or not start:
             raise DatasetError(f"{source_name} requires capture_id and window_start")
+        if capture in capture_clusters and capture_clusters[capture] != cluster:
+            raise DatasetError(
+                f"conflicting clusters in {source_name} for capture {capture}: {capture_clusters[capture]} vs {cluster}"
+            )
+        capture_clusters[capture] = cluster
+        key = (cluster, capture, start)
         if key in seen:
             raise DatasetError(f"duplicate window in {source_name}: {key}")
         seen.add(key)
@@ -78,10 +98,14 @@ def _select_scenarios(rows: list[dict[str, str]], scenarios: frozenset[str]) -> 
 def _write_dataset(path: Path, rows: list[dict[str, str]], features: tuple[str, ...]) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     fields = [*CONTEXT_COLUMNS, *features]
+    prepared_rows = [
+        {**row, "cluster_id": row.get("cluster_id") or "minikube"}
+        for row in rows
+    ]
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(prepared_rows)
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -93,6 +117,7 @@ def _summary(name: str, path: Path, rows: list[dict[str, str]], all_rows: int, f
         labeled_rows=len(rows),
         class_counts=dict(Counter(row["label"] for row in rows)),
         session_counts=dict(Counter(row["session_id"] for row in rows)),
+        cluster_counts=dict(Counter(row.get("cluster_id") or "minikube" for row in rows)),
         features=features,
         sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
         limitation=limitation,

@@ -143,3 +143,35 @@ def test_dataset_builder_keeps_each_ablation_in_its_scenario_family(tmp_path: Pa
     assert summary["network"].class_counts == {"normal": 1, "attack": 1}
     assert summary["workload"].labeled_rows == 2
     assert summary["workload"].class_counts == {"normal": 1, "attack": 1}
+
+
+def test_dataset_builder_validates_capture_cluster_consistency_and_uniqueness(tmp_path: Path) -> None:
+    processed = tmp_path / "processed"
+    processed.mkdir()
+    row = {
+        "window_start": "2026-01-01T00:00:00Z",
+        "window_end": "2026-01-01T00:00:10Z",
+        "capture_id": "cap1",
+        "session_id": "sess1",
+        "label": "normal",
+        "attack_type": "normal",
+        "network_event_count": "2",
+        "telemetry_source": "network",
+    }
+    # 1. Conflicting clusters within same capture_id must raise DatasetError
+    row_cluster_a = {**row, "cluster_id": "cluster-a"}
+    row_cluster_b = {**row, "cluster_id": "cluster-b", "window_start": "2026-01-01T00:00:10Z"}
+    _write_csv(processed / "network_conflict.csv", [row_cluster_a, row_cluster_b])
+    with pytest.raises(DatasetError, match="conflicting clusters"):
+        build_datasets(processed, tmp_path / "out1")
+
+    # 2. Distinct clusters with identical timestamps across different captures should succeed without collision
+    processed2 = tmp_path / "processed2"
+    processed2.mkdir()
+    row_c1 = {**row, "capture_id": "cap_c1", "session_id": "sess_c1", "cluster_id": "cluster-1"}
+    row_c2 = {**row, "capture_id": "cap_c2", "session_id": "sess_c2", "cluster_id": "cluster-2"}
+    _write_csv(processed2 / "network_c1.csv", [row_c1])
+    _write_csv(processed2 / "network_c2.csv", [row_c2])
+    summaries = build_datasets(processed2, tmp_path / "out2")
+    assert summaries["network"].labeled_rows == 2
+    assert summaries["network"].cluster_counts == {"cluster-1": 1, "cluster-2": 1}

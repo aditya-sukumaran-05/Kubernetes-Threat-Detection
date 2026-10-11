@@ -28,3 +28,14 @@ def test_alignment_rejects_different_sessions() -> None:
     right = [{"window_start": "2026-01-01T00:00:00Z", "window_end": "2026-01-01T00:00:10Z", "session_id": "workload"}]
     with pytest.raises(ValueError, match="different experiment sessions"):
         align_feature_windows(left, right)
+
+
+def test_cross_cluster_alignment_is_rejected() -> None:
+    left = [
+        {"window_start": "2026-01-01T00:00:00Z", "window_end": "2026-01-01T00:00:10Z", "session_id": "s1", "cluster_id": "cluster-a", "network_event_count": 1}
+    ]
+    right = [
+        {"window_start": "2026-01-01T00:00:00Z", "window_end": "2026-01-01T00:00:10Z", "session_id": "s1", "cluster_id": "cluster-b", "workload_sample_count": 1}
+    ]
+    with pytest.raises(ValueError, match="cannot align captures from different clusters"):
+        align_feature_windows(left, right)

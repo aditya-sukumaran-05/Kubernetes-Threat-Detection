@@ -250,3 +250,80 @@ def test_multi_cluster_run_capture_discovery_and_manifest(tmp_path: Path) -> Non
     manifest_clusters = {e["experiment_id"]: e["cluster_id"] for e in manifest["experiments"]}
     assert manifest_clusters["run-1"] == "minikube"
     assert manifest_clusters["run-2"] == "cluster-b-constrained"
+
+
+def test_cluster_provenance_propagates_to_ml_datasets_and_feature_isolation(tmp_path: Path) -> None:
+    from experiments.metadata import CaptureMetadata, LabelInterval, assign_labels
+    from ml.datasets import CONTEXT_COLUMNS, build_datasets, read_csv
+    from telemetry.schemas import parse_utc_timestamp
+
+    processed_dir = tmp_path / "processed"
+    processed_dir.mkdir(parents=True)
+    out_dir = tmp_path / "out"
+
+    # 1. CaptureMetadata with explicit non-minikube cluster_id
+    interval = LabelInterval(
+        parse_utc_timestamp("2026-09-20T10:00:00Z"),
+        parse_utc_timestamp("2026-09-20T10:01:00Z"),
+        "attack",
+        "network_attack",
+    )
+    capture = CaptureMetadata(
+        capture_id="run_b_network",
+        source="network",
+        path="network.jsonl",
+        session_id="run-b",
+        description="Cluster B run",
+        label_intervals=(interval,),
+        scenario="network_attack",
+        cluster_id="cluster-b-constrained",
+    )
+
+    # 2. Assign labels retains cluster_id
+    raw_rows = [{
+        "window_start": "2026-09-20T10:00:00Z",
+        "window_end": "2026-09-20T10:00:10Z",
+        "network_event_count": 5,
+    }]
+    labeled_rows = assign_labels(raw_rows, capture)
+    assert labeled_rows[0]["cluster_id"] == "cluster-b-constrained"
+
+    # Write processed rows for cluster B and a minikube normal run
+    import csv
+    def write_csv(p: Path, rows: list[dict]):
+        with p.open("w", newline="", encoding="utf-8") as h:
+            writer = csv.DictWriter(h, fieldnames=list(rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(rows)
+
+    write_csv(processed_dir / "run_b_network.csv", labeled_rows)
+    write_csv(processed_dir / "run_a_network.csv", [{
+        "window_start": "2026-09-20T10:00:00Z",
+        "window_end": "2026-09-20T10:00:10Z",
+        "cluster_id": "minikube",
+        "capture_id": "run_a_network",
+        "session_id": "run-a",
+        "scenario": "network_normal",
+        "telemetry_source": "network",
+        "label": "normal",
+        "attack_type": "normal",
+        "network_event_count": 2,
+    }])
+
+    # 3. Build datasets
+    summaries = build_datasets(processed_dir, out_dir)
+    assert summaries["network"].labeled_rows == 2
+    assert summaries["network"].cluster_counts == {"cluster-b-constrained": 1, "minikube": 1}
+
+    # 4. Read back CSV and verify cluster_id column is present and correct
+    ds_rows = read_csv(out_dir / "network_dataset.csv")
+    assert len(ds_rows) == 2
+    clusters = {r["session_id"]: r["cluster_id"] for r in ds_rows}
+    assert clusters["run-b"] == "cluster-b-constrained"
+    assert clusters["run-a"] == "minikube"
+
+    # 5. Verify cluster_id is in CONTEXT_COLUMNS and NOT in features
+    assert "cluster_id" in CONTEXT_COLUMNS
+    assert "cluster_id" not in summaries["network"].features
+    for f in summaries["network"].features:
+        assert f.startswith("network_")
