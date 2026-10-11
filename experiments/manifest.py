@@ -21,11 +21,14 @@ def _row_count(path: Path) -> int:
 
 def build_manifest(runs_dir: Path, output_path: Path) -> dict[str, Any]:
     entries = []
-    for metadata_path in sorted(runs_dir.glob("*/metadata.json")) if runs_dir.exists() else []:
+    metadata_paths = sorted({p for p in runs_dir.glob("**/metadata.json") if p.is_file()}) if runs_dir.exists() else []
+    for metadata_path in metadata_paths:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         telemetry = metadata.get("telemetry", {})
         entries.append({
-            "experiment_id": metadata.get("experiment_id"), "scenario": metadata.get("scenario"),
+            "experiment_id": metadata.get("experiment_id"),
+            "cluster_id": metadata.get("cluster_id", "minikube"),
+            "scenario": metadata.get("scenario"),
             "label": metadata.get("label"), "status": metadata.get("status"),
             "start_time_utc": metadata.get("experiment_start_time_utc"), "end_time_utc": metadata.get("experiment_end_time_utc"),
             "network_attack_start_time_utc": metadata.get("network_attack_start_time_utc"), "network_attack_end_time_utc": metadata.get("network_attack_end_time_utc"),

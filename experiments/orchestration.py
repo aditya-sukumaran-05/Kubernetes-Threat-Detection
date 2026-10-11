@@ -21,16 +21,25 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def experiment_id(scenario: str, now: datetime | None = None) -> str:
+def experiment_id(scenario: str, now: datetime | None = None, cluster_id: str | None = None) -> str:
     timestamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
     safe_scenario = "".join(char if char.isalnum() or char == "_" else "_" for char in scenario)
+    if cluster_id and cluster_id != "minikube":
+        safe_cluster = "".join(char if char.isalnum() or char == "_" else "_" for char in cluster_id)
+        return f"{timestamp}_{safe_cluster}_{safe_scenario}_{uuid.uuid4().hex[:8]}"
     return f"{timestamp}_{safe_scenario}_{uuid.uuid4().hex[:8]}"
 
 
-def minikube_context_is_active(expected_context: str = "minikube", run: Callable[..., Any] = subprocess.run) -> bool:
+def kubernetes_context_is_active(expected_context: str, run: Callable[..., Any] | None = None) -> bool:
     """Check the exact configured Kubernetes context before an attack is run."""
-    result = run(["kubectl", "config", "current-context"], capture_output=True, text=True, check=False)
+    runner = run or subprocess.run
+    result = runner(["kubectl", "config", "current-context"], capture_output=True, text=True, check=False)
     return result.returncode == 0 and result.stdout.strip() == expected_context
+
+
+def minikube_context_is_active(expected_context: str = "minikube", run: Callable[..., Any] | None = None) -> bool:
+    """Check the exact configured Kubernetes context before an attack is run (backward-compatible alias)."""
+    return kubernetes_context_is_active(expected_context=expected_context, run=run)
 
 
 def overlap_interval(
@@ -98,6 +107,8 @@ class RunMetadata:
     telemetry: dict[str, str] = field(default_factory=lambda: {"network": "network.jsonl", "workload": "workload.csv"})
     events: list[dict[str, str]] = field(default_factory=list)
     validation: dict[str, Any] = field(default_factory=dict)
+    cluster_id: str = "minikube"
+    cluster_metadata: dict[str, Any] = field(default_factory=dict)
 
     def record(self, event: str, timestamp: str | None = None) -> str:
         recorded = timestamp or utc_now()

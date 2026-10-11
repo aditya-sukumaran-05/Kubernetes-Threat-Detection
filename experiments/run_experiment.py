@@ -122,6 +122,8 @@ class ValidatedExperimentPlan:
     warmup_seconds: float
     attack_seconds: float
     cooldown_seconds: float
+    cluster_id: str = "minikube"
+    cluster_profile: str = "baseline"
 
 
 def validate_experiment_preflight(
@@ -161,6 +163,17 @@ def validate_experiment_preflight(
     validate_k8s_name(cluster["expected_context"], "expected_context")
     if "target_label" in cluster:
         validate_k8s_selector(cluster["target_label"], "target_label")
+
+    cluster_id = cluster.get("cluster_id")
+    if cluster_id is not None:
+        validate_k8s_name(cluster_id, "cluster_id")
+    else:
+        cluster_id = cluster["expected_context"]
+
+    cluster_profile = cluster.get("cluster_profile", "baseline")
+    if not isinstance(cluster_profile, str) or not cluster_profile.strip():
+        raise ValueError("cluster_profile must be a non-empty string")
+    validate_k8s_name(cluster_profile, "cluster_profile")
 
     collectors = config["collectors"]
     if not isinstance(collectors, dict):
@@ -242,9 +255,20 @@ def validate_experiment_preflight(
         raw_output_dir, base_dir=resolved_root, allowed_roots=[resolved_root]
     )
 
-    run_id = experiment_id(scenario)
+    isolate_by_cluster = config.get("isolate_by_cluster")
+    if isolate_by_cluster is None:
+        isolate_by_cluster = cluster.get("isolate_by_cluster", (cluster_id != "minikube"))
+
+    if isolate_by_cluster:
+        target_dir = validate_safe_output_path(
+            output_root / cluster_id, base_dir=output_root, allowed_roots=[output_root]
+        )
+    else:
+        target_dir = output_root
+
+    run_id = experiment_id(scenario, cluster_id=(cluster_id if isolate_by_cluster else None))
     canonical_run_dir = validate_safe_output_path(
-        output_root / run_id, base_dir=output_root, allowed_roots=[output_root]
+        target_dir / run_id, base_dir=target_dir, allowed_roots=[target_dir]
     )
 
     return ValidatedExperimentPlan(
@@ -258,6 +282,8 @@ def validate_experiment_preflight(
         warmup_seconds=warmup_seconds,
         attack_seconds=attack_seconds,
         cooldown_seconds=cooldown_seconds,
+        cluster_id=cluster_id,
+        cluster_profile=cluster_profile,
     )
 
 
@@ -279,6 +305,12 @@ def run_scenario(config: dict[str, Any], scenario: str, project_root: Path, exec
         network_activity=definition["network_activity"],
         workload_activity=definition["workload_activity"],
         notes="Planned by the reproducible experiment runner.",
+        cluster_id=plan.cluster_id,
+        cluster_metadata={
+            "expected_context": cluster["expected_context"],
+            "cluster_profile": plan.cluster_profile,
+            **{k: v for k, v in cluster.items() if k not in ("namespace", "target_workload", "target_label")},
+        },
     )
     metadata.record("run directory created")
     write_metadata(run_dir, metadata)
@@ -288,12 +320,19 @@ def run_scenario(config: dict[str, Any], scenario: str, project_root: Path, exec
         save_metadata(run_dir, metadata)
         return run_dir, metadata
 
-    # 3. Minikube context check for execution mode
-    if not minikube_context_is_active(cluster["expected_context"]):
-        metadata.status = "refused_non_minikube_context"
-        metadata.record("refused: active Kubernetes context did not equal configured Minikube context")
+    # 3. Explicit Kubernetes context check for execution mode
+    expected_context = cluster["expected_context"]
+    if not minikube_context_is_active(expected_context):
+        metadata.status = (
+            "refused_non_minikube_context"
+            if expected_context == "minikube"
+            else "refused_unexpected_context"
+        )
+        metadata.record(
+            f"refused: active Kubernetes context did not equal configured context {expected_context!r}"
+        )
         save_metadata(run_dir, metadata)
-        raise RuntimeError("refusing experiment: active Kubernetes context is not Minikube")
+        raise RuntimeError(f"refusing experiment: active Kubernetes context is not {expected_context}")
 
     network_collector = workload_collector = attack_network = attack_workload = None
     cpu_cleanup_error: str | None = None

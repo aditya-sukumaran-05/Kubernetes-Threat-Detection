@@ -37,6 +37,7 @@ class CaptureMetadata:
     description: str
     label_intervals: tuple[LabelInterval, ...]
     scenario: str = ""
+    cluster_id: str = "minikube"
 
 
 def load_capture_metadata(path: Path) -> list[CaptureMetadata]:
@@ -60,7 +61,11 @@ def load_capture_metadata(path: Path) -> list[CaptureMetadata]:
         for previous, current in zip(intervals, intervals[1:]):
             if current.start < previous.end:
                 raise SchemaError(f"{capture_id}: label intervals overlap")
-        result.append(CaptureMetadata(capture_id, source, item["path"], item["session_id"], item.get("description", ""), intervals, item.get("scenario", capture_id)))
+        result.append(CaptureMetadata(
+            capture_id, source, item["path"], item["session_id"],
+            item.get("description", ""), intervals, item.get("scenario", capture_id),
+            cluster_id=item.get("cluster_id", "minikube"),
+        ))
     return result
 
 
@@ -81,6 +86,7 @@ def assign_labels(rows: list[dict[str, object]], capture: CaptureMetadata) -> li
             "experiment_id": capture.session_id,
             "scenario": capture.scenario,
             "telemetry_source": capture.source,
+            "cluster_id": getattr(capture, "cluster_id", "minikube"),
             "label": interval.label if interval else "unknown",
             "attack_type": interval.attack_type if interval else "unknown",
         })
@@ -120,7 +126,8 @@ def load_run_capture_metadata(
     project_root = runs_dir.parents[1]
     captures: list[CaptureMetadata] = []
     cutoff = parse_utc_timestamp(min_start_time_utc) if min_start_time_utc else None
-    for metadata_path in sorted(runs_dir.glob("*/metadata.json")):
+    metadata_paths = sorted({p for p in runs_dir.glob("**/metadata.json") if p.is_file()}) if runs_dir.exists() else []
+    for metadata_path in metadata_paths:
         raw = json.loads(metadata_path.read_text(encoding="utf-8"))
         if raw.get("status") != "validated" or not raw.get("validation", {}).get("valid"):
             continue
@@ -138,6 +145,7 @@ def load_run_capture_metadata(
             captures.append(CaptureMetadata(
                 capture_id=f"{raw['experiment_id']}_{source}", source=source,
                 path=str(capture_path.relative_to(project_root)), session_id=raw["experiment_id"],
-                description=raw.get("notes", ""), label_intervals=_run_intervals(raw, source), scenario=raw["scenario"],
+                description=raw.get("notes", ""), label_intervals=_run_intervals(raw, source),
+                scenario=raw["scenario"], cluster_id=raw.get("cluster_id", "minikube"),
             ))
     return captures

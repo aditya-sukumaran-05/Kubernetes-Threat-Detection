@@ -1,5 +1,7 @@
 cluster:
+  cluster_id: minikube
   expected_context: minikube
+  cluster_profile: baseline
   namespace: default
   target_label: app=webapp
   target_workload: deployment/webapp
