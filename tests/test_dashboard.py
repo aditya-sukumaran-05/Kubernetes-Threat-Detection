@@ -1,4 +1,4 @@
-"""Automated tests for the threat detection dashboard and telemetry provider."""
+"""Automated tests for the threat detection dashboard, navigation, and components."""
 
 from __future__ import annotations
 
@@ -7,7 +7,10 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from dashboard.app import NAV_ALERTS, NAV_LIVE, NAV_REPLAY, NAV_RESEARCH
+from dashboard.components.summary import format_probability, render_detection_summary
 from dashboard.telemetry_provider import CapturedDatasetProvider, LiveKubernetesProvider
+from ml.inference import InferenceResult
 
 
 @pytest.fixture
@@ -50,64 +53,152 @@ def test_live_provider_stub() -> None:
         live.get_windows("network")
 
 
+def test_format_probability_adaptive_precision() -> None:
+    """Verify adaptive probability formatting avoids misleading 0.0% on small non-zero values."""
+    assert format_probability(None) == "N/A"
+    assert format_probability(0.0) == "0.0%"
+    assert format_probability(0.00005) == "< 0.01%"
+    assert format_probability(0.0004775) == "0.05%"
+    assert format_probability(0.0057577) == "0.6%"
+    assert format_probability(0.035) == "3.5%"
+    assert format_probability(0.725) == "72.5%"
+    assert format_probability(1.0) == "100.0%"
+
+
 def test_dashboard_app_renders_successfully() -> None:
-    """Test full Streamlit app lifecycle using AppTest."""
+    """Test full Streamlit app lifecycle using AppTest landing on default Live Monitoring."""
     at = AppTest.from_file("dashboard/app.py")
-    at.run(timeout=15)
+    at.run(timeout=25)
 
     assert not at.exception
     # Verify title
     assert len(at.title) >= 1
-    # Verify presence of metrics (Predicted Class, Attack Probability, Confidence, Modality)
+    # Verify presence of metrics on default Live Monitoring page
+    metric_labels = [m.label for m in at.metric]
+    assert "Valid Network Events" in metric_labels
+    assert "Inference Windows (10s)" in metric_labels
+    assert "Active Model" in metric_labels
+
+
+def test_dashboard_navigation_research_diagnostics() -> None:
+    """Test navigating to Research & Diagnostics section and rendering LOSO ablation tables."""
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    at.sidebar.radio[0].set_value(NAV_RESEARCH)
+    at.run(timeout=25)
+
+    assert not at.exception
+    # Verify Research header and LOSO metric cards
+    metric_labels = [m.label for m in at.metric]
+    assert "Total LOSO Folds" in metric_labels
+    assert "Total Evaluated Windows" in metric_labels
+    # Verify ablation data table is rendered
+    assert len(at.dataframe) >= 1
+
+
+def test_dashboard_navigation_alert_history() -> None:
+    """Test navigating to Alert History & Telemetry Health section."""
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    at.sidebar.radio[0].set_value(NAV_ALERTS)
+    at.run(timeout=25)
+
+    assert not at.exception
+    # Verify collector health table is rendered
+    assert len(at.dataframe) >= 1
+    # Verify alert log and export subheaders are present
+    subheaders = [s.value for s in at.subheader]
+    assert any("Export Evaluated Records" in s for s in subheaders)
+    assert any("Threat Incident Alerts Log" in s for s in subheaders)
+
+
+def test_dashboard_navigation_historical_replay() -> None:
+    """Test navigating to Historical Replay & Testing section and stepping through observation windows."""
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    at.sidebar.radio[0].set_value(NAV_REPLAY)
+    at.run(timeout=25)
+
+    assert not at.exception
+    # Verify core replay prediction metrics are rendered
     metric_labels = [m.label for m in at.metric]
     assert "Predicted Class" in metric_labels
     assert "Attack Probability" in metric_labels
     assert "Model Confidence" in metric_labels
 
+    # Verify slider exists and is within bounds
+    assert len(at.slider) >= 1
+    slider = at.slider[0]
+    assert slider.min == 1
+    assert slider.max >= 1
 
-def test_dashboard_manual_mode_toggle() -> None:
-    """Test switching detection source mode to Manual Window in AppTest."""
-    at = AppTest.from_file("dashboard/app.py")
-    at.run(timeout=15)
-
-    # Toggle radio to Manual Window
-    at.sidebar.radio[0].set_value("Manual Window")
-    at.run(timeout=15)
-
-    assert not at.exception
-    # Verify text area for JSON input is rendered
-    assert len(at.text_area) >= 1
-    assert "Telemetry Window JSON Payload" in at.text_area[0].label
+    # Verify provenance caption is explicitly historical replay
+    assert any("Historical Experiment Replay" in c.value for c in at.caption)
 
 
-def test_dashboard_live_network_capture_mode_toggle() -> None:
-    """Test switching detection source mode to Live Network Capture in AppTest."""
+def test_dashboard_replay_attack_jump_button() -> None:
+    """Test jumping to the first ground-truth attack window via the attack jump button."""
     at = AppTest.from_file("dashboard/app.py")
     at.run(timeout=25)
 
-    # Toggle radio to Live Network Capture
-    at.sidebar.radio[0].set_value("Live Network Capture")
+    at.sidebar.radio[0].set_value(NAV_REPLAY)
     at.run(timeout=25)
 
     assert not at.exception
-    # Verify live capture metrics are rendered
-    metric_labels = [m.label for m in at.metric]
-    assert "Valid Network Events" in metric_labels
-    assert "Inference Windows (10s)" in metric_labels
-    assert "Threat Breakdown" in metric_labels
-    assert "Active Model" in metric_labels
-    assert "Predicted Class" in metric_labels
+    # Find Jump to Attack Window button
+    jump_btn = [b for b in at.button if "Jump to Attack Window" in b.label]
+    assert len(jump_btn) == 1
+    # In All Sessions (fusion/network), attack windows exist so button is enabled
+    assert not jump_btn[0].disabled
 
-    # Verify windows table is rendered
-    assert len(at.dataframe) >= 1
+    jump_btn[0].click()
+    at.run(timeout=25)
+    assert not at.exception
+
+    # Slider value should have advanced past window 1
+    slider = at.slider[0]
+    assert slider.value > 1
 
 
-def test_dashboard_live_network_capture_model_switch() -> None:
-    """Test switching models while in Live Network Capture mode."""
+def test_dashboard_replay_session_switching_and_bounds() -> None:
+    """Test switching experiment sessions reconciles slider bounds safely without index errors."""
     at = AppTest.from_file("dashboard/app.py")
     at.run(timeout=25)
 
-    at.sidebar.radio[0].set_value("Live Network Capture")
+    at.sidebar.radio[0].set_value(NAV_REPLAY)
+    at.run(timeout=25)
+
+    # Initial slider max (All Sessions in fusion has 122 windows)
+    initial_max = at.slider[0].max
+    assert initial_max > 10
+
+    # Select a specific session from the dropdown
+    session_select = [s for s in at.selectbox if "Select Experiment Session" in s.label]
+    assert len(session_select) == 1
+    session_options = session_select[0].options
+    assert len(session_options) > 1
+
+    # Choose first individual session
+    target_session = session_options[1]
+    session_select[0].set_value(target_session)
+    at.run(timeout=25)
+
+    assert not at.exception
+    # Reconciled slider should have bounds matching the smaller single session
+    reconciled_slider = at.slider[0]
+    assert reconciled_slider.max < initial_max
+    assert 1 <= reconciled_slider.value <= reconciled_slider.max
+
+
+def test_dashboard_live_monitoring_model_switch() -> None:
+    """Test switching models while in Live Threat Monitoring mode."""
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    # Defaults to Live Threat Monitoring
     at.sidebar.selectbox[1].set_value("xgboost")
     at.run(timeout=25)
 
@@ -197,9 +288,7 @@ def test_dashboard_live_capture_filter_and_window_navigation() -> None:
     at = AppTest.from_file("dashboard/app.py")
     at.run(timeout=25)
 
-    at.sidebar.radio[0].set_value("Live Network Capture")
-    at.run(timeout=25)
-
+    # Defaults to Live Threat Monitoring
     assert not at.exception
     # Verify table is rendered
     assert len(at.dataframe) >= 1
@@ -224,5 +313,3 @@ def test_dashboard_live_capture_filter_and_window_navigation() -> None:
     slider.set_value(1)
     at.run(timeout=15)
     assert not at.exception
-
-

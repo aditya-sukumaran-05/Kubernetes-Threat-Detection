@@ -11,12 +11,14 @@ import time
 from pathlib import Path
 from typing import Any
 
+from datetime import datetime, timezone
+
 import pandas as pd
 import streamlit as st
 
 from dashboard.components.charts import render_telemetry_charts
 from dashboard.components.evidence import render_evidence
-from dashboard.components.summary import render_detection_summary
+from dashboard.components.summary import format_probability, render_detection_summary
 from dashboard.live_engine import (
     DEFAULT_NETWORK_PATH,
     DEFAULT_RUNTIME_PATH,
@@ -32,11 +34,30 @@ from telemetry.schemas import SchemaError
 def _render_collector_card(health: CollectorHealth) -> None:
     """Render a concise operational status card for a telemetry stream collector."""
     status_icon = "🟢" if health.is_active else ("🟡" if health.file_exists else "🔴")
-    st.markdown(f"**{status_icon} {health.source_name}**")
+    pid_str = f" (PID `{health.pid}`)" if health.pid else ""
+    st.markdown(f"**{status_icon} {health.source_name}**{pid_info if 'pid_info' in locals() else pid_str}")
     st.caption(f"Status: `{health.status_message}`")
+
+    # Freshness / Staleness Indicator
+    freshness_str = "No records"
+    if health.last_record_timestamp:
+        try:
+            now_utc = datetime.now(timezone.utc)
+            rec_ts = health.last_record_timestamp
+            if rec_ts.tzinfo is None:
+                rec_ts = rec_ts.replace(tzinfo=timezone.utc)
+            age_s = max(0, int((now_utc - rec_ts).total_seconds()))
+            if age_s > 60:
+                freshness_str = f"⚠️ Stale ({age_s}s ago)"
+            else:
+                freshness_str = f"Fresh ({age_s}s ago)"
+        except Exception:
+            freshness_str = "Timestamp recorded"
+
     c1, c2 = st.columns(2)
     with c1:
         st.caption(f"Valid Records: `{health.total_valid_records}`")
+        st.caption(f"Telemetry Freshness: `{freshness_str}`")
     with c2:
         st.caption(f"Skipped / Malformed: `{health.malformed_records}`")
 
@@ -221,16 +242,30 @@ def render_live_capture(
     with m4:
         st.metric("Active Model", selected_model.replace("_", " ").title())
 
+    # Latest Window Prediction Metrics Row (ensures primary prediction metrics are always visible)
+    if latest_inf is not None:
+        p1, p2, p3, p4 = st.columns(4)
+        with p1:
+            st.metric("Predicted Class", latest_inf.predicted_label.upper())
+        with p2:
+            st.metric("Attack Probability", format_probability(latest_inf.attack_probability), help="P(y = attack) for latest live window")
+        with p3:
+            st.metric("Model Confidence", format_probability(latest_inf.confidence), help="P(y = ŷ) for latest live window")
+        with p4:
+            st.metric("Latest Window UTC", latest_record.window_start[-9:-1] if latest_record.window_start else "N/A")
+
     # 7. Prominent Latest Verdict Banner with Prediction vs Malicious Activity distinction
     st.markdown("#### 🚨 Latest Live Observation Window Verdict")
     if latest_inf is not None:
+        att_prob_str = format_probability(latest_inf.attack_probability)
+        conf_str = format_probability(latest_inf.confidence)
         if latest_inf.predicted_label == "attack":
             st.error(
                 f"🚨 **PREDICTED THREAT DETECTED** in Window `{latest_record.window_start}` "
                 f"({latest_inf.modality.title()} — {latest_inf.model_name.replace('_', ' ').title()})\n\n"
                 f"• **Predicted Label:** ATTACK\n"
-                f"• **Attack Probability:** {latest_inf.attack_probability * 100:.1f}%\n"
-                f"• **Model Confidence:** {latest_inf.confidence * 100:.1f}%\n"
+                f"• **Attack Probability:** {att_prob_str}\n"
+                f"• **Model Confidence:** {conf_str}\n"
                 f"• **Affected Pod(s):** `{latest_record.affected_pods}`",
                 icon="🚨",
             )
@@ -244,8 +279,8 @@ def render_live_capture(
                 f"✅ **PREDICTED NORMAL WORKLOAD** in Window `{latest_record.window_start}` "
                 f"({latest_inf.modality.title()} — {latest_inf.model_name.replace('_', ' ').title()})\n\n"
                 f"• **Predicted Label:** NORMAL\n"
-                f"• **Attack Probability:** {latest_inf.attack_probability * 100:.1f}%\n"
-                f"• **Model Confidence:** {latest_inf.confidence * 100:.1f}%\n"
+                f"• **Attack Probability:** {att_prob_str}\n"
+                f"• **Model Confidence:** {conf_str}\n"
                 f"• **Status:** Conforms to benign application baseline.",
                 icon="✅",
             )
@@ -302,10 +337,10 @@ def render_live_capture(
         wl_res = r.workload_inferences.get(selected_model)
         fus_res = r.fusion_inferences.get(selected_model)
 
-        net_text = f"{net_res.predicted_label.upper()} ({net_res.attack_probability*100:.1f}%)" if net_res and net_res.attack_probability is not None else ("EVALUATED" if net_res else "No Socket Events (Idle)")
-        wl_text = f"{wl_res.predicted_label.upper()} ({wl_res.attack_probability*100:.1f}%)" if wl_res and wl_res.attack_probability is not None else ("EVALUATED" if wl_res else "No Metrics")
+        net_text = f"{net_res.predicted_label.upper()} ({format_probability(net_res.attack_probability)})" if net_res and net_res.attack_probability is not None else ("EVALUATED" if net_res else "No Socket Events (Idle)")
+        wl_text = f"{wl_res.predicted_label.upper()} ({format_probability(wl_res.attack_probability)})" if wl_res and wl_res.attack_probability is not None else ("EVALUATED" if wl_res else "No Metrics")
         if r.is_fused and fus_res:
-            fus_text = f"{fus_res.predicted_label.upper()} ({fus_res.attack_probability*100:.1f}%)" if fus_res.attack_probability is not None else "EVALUATED"
+            fus_text = f"{fus_res.predicted_label.upper()} ({format_probability(fus_res.attack_probability)})" if fus_res.attack_probability is not None else "EVALUATED"
         elif not r.network_available:
             fus_text = "Missing Network (Idle)"
         elif not r.workload_available:
@@ -443,7 +478,7 @@ def render_live_capture(
         if target_rec.network_available and target_rec.network_features:
             net_res = target_rec.network_inferences.get(selected_model)
             if net_res:
-                render_detection_summary(net_res)
+                render_detection_summary(net_res, is_live=True)
                 st.markdown("---")
                 render_telemetry_charts(chart_windows, selected_idx, "network")
                 st.markdown("---")
@@ -476,7 +511,7 @@ def render_live_capture(
         if target_rec.workload_available and target_rec.workload_features:
             wl_res = target_rec.workload_inferences.get(selected_model)
             if wl_res:
-                render_detection_summary(wl_res)
+                render_detection_summary(wl_res, is_live=True)
                 st.markdown("---")
                 render_telemetry_charts(chart_windows, selected_idx, "workload")
                 st.markdown("---")
@@ -494,7 +529,7 @@ def render_live_capture(
         if target_rec.is_fused and target_rec.network_features and target_rec.workload_features:
             fus_res = target_rec.fusion_inferences.get(selected_model)
             if fus_res:
-                render_detection_summary(fus_res)
+                render_detection_summary(fus_res, is_live=True)
                 st.markdown("---")
                 render_telemetry_charts(chart_windows, selected_idx, "fusion")
                 st.markdown("---")
