@@ -815,7 +815,13 @@ def test_experiment_preflight_fails_before_write_or_subprocess_on_symlink_output
     assert canary.stat().st_mtime_ns == canary_stat_before.st_mtime_ns
     assert not (project_root / "experiments").exists()
 
-    # Test Case B: Run directory itself is a pre-existing symlink resolving outside output root
+
+def test_experiment_preflight_fails_before_write_or_subprocess_on_planted_run_dir_symlink(
+    base_experiment_config: dict, tmp_path: Path
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+
     normal_output_dir = project_root / "experiments" / "runs"
     normal_output_dir.mkdir(parents=True)
     fixed_run_id = "20261011T000000Z_network_normal_planted_link"
