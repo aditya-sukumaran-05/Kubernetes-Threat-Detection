@@ -1,10 +1,28 @@
-@"
+# Byte-compiled / cache / temporary files
 __pycache__/
+*.py[cod]
+*$py.class
+*.bak
+
+# Testing and linting caches
 .pytest_cache/
 .ruff_cache/
+.coverage
+htmlcov/
+
+# Model files
 *.joblib
+
+# External datasets
 external_data/
 
-# Local collector state
+# Local collector runtime state / PID files
+*.pid
+.*.pid
 telemetry/data/.*.pid
-"@ | Set-Content .gitignore
+telemetry/data/*/.runtime_collector.pid
+telemetry/data/.workload_collector.pid
+telemetry/data/.network_collector.pid
+
+# Streamlit secrets
+.streamlit/secrets.toml

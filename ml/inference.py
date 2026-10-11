@@ -16,6 +16,7 @@ from ml.train import load_config
 from telemetry.features.network import extract_network_features
 from telemetry.features.workload import extract_workload_features
 from telemetry.schemas import NetworkEvent, WorkloadSample
+from telemetry.security import validate_finite_float
 
 
 class InferenceSchemaError(ValueError):
@@ -111,7 +112,7 @@ class ThreatDetector:
         for feature in required_features:
             val = window[feature]
             try:
-                numeric_val = float(val)
+                numeric_val = validate_finite_float(val, field_name=feature)
                 feature_values[feature] = numeric_val
                 row.append(numeric_val)
             except (ValueError, TypeError) as exc:

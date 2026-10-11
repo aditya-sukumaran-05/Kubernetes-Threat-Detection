@@ -23,7 +23,7 @@ from experiments.orchestration import (
     validate_capture_files,
     write_metadata,
 )
-
+from telemetry.security import validate_k8s_name
 
 CPU_ATTACK_PID_FILE = "/tmp/kubernetes-threat-detection-cpu-attack.pid"
 
@@ -36,12 +36,17 @@ def load_config(path: Path) -> dict[str, Any]:
 def activity_command(scenario: str, config: dict[str, Any], cluster: dict[str, Any]) -> list[str] | None:
     """Return a local-cluster-only traffic command; no command targets external hosts."""
     definition = config["scenarios"][scenario]
-    namespace = cluster["namespace"]
+    namespace = validate_k8s_name(cluster["namespace"], "namespace")
     if scenario in {"network_normal", "workload_normal", "workload_attack", "fusion_normal"}:
-        requests, delay = definition["network_requests"], definition["request_delay_seconds"]
+        requests = int(definition["network_requests"])
+        delay = float(definition["request_delay_seconds"])
+        if requests <= 0 or delay < 0:
+            raise ValueError(f"Invalid network request parameters: requests={requests}, delay={delay}")
         script = f"i=0; while [ $i -lt {requests} ]; do wget -q -O /dev/null http://webapp; i=$((i+1)); sleep {delay}; done"
     elif scenario in {"network_attack", "fusion_attack"}:
-        duration = definition["network_duration_seconds"]
+        duration = int(definition["network_duration_seconds"])
+        if duration <= 0:
+            raise ValueError(f"Invalid duration: duration={duration}")
         script = f"end=$(( $(date +%s) + {duration} )); while [ \"$(date +%s)\" -lt \"$end\" ]; do wget -q -O /dev/null http://webapp; done"
     else:
         return None
@@ -50,8 +55,10 @@ def activity_command(scenario: str, config: dict[str, Any], cluster: dict[str, A
 
 def cpu_attack_command(cluster: dict[str, Any]) -> list[str]:
     """Start a marked local CPU loop that can be safely cleaned up in-pod."""
+    namespace = validate_k8s_name(cluster["namespace"], "namespace")
+    target_workload = validate_k8s_name(cluster["target_workload"], "target_workload")
     script = f"echo $$ > {CPU_ATTACK_PID_FILE}; while :; do :; done"
-    return ["kubectl", "exec", "-n", cluster["namespace"], cluster["target_workload"], "--", "sh", "-c", script]
+    return ["kubectl", "exec", "-n", namespace, target_workload, "--", "sh", "-c", script]
 
 
 def stop_cpu_attack(cluster: dict[str, Any]) -> str | None:
@@ -61,6 +68,8 @@ def stop_cpu_attack(cluster: dict[str, Any]) -> str | None:
     running.  The PID file and command check prevent cleanup from killing an
     unrelated process in the target workload.
     """
+    namespace = validate_k8s_name(cluster["namespace"], "namespace")
+    target_workload = validate_k8s_name(cluster["target_workload"], "target_workload")
     script = (
         f"pid_file={CPU_ATTACK_PID_FILE}; "
         "[ -f \"$pid_file\" ] || exit 0; "
@@ -72,7 +81,7 @@ def stop_cpu_attack(cluster: dict[str, Any]) -> str | None:
         "rm -f \"$pid_file\""
     )
     result = subprocess.run(
-        ["kubectl", "exec", "-n", cluster["namespace"], cluster["target_workload"], "--", "sh", "-c", script],
+        ["kubectl", "exec", "-n", namespace, target_workload, "--", "sh", "-c", script],
         capture_output=True, text=True, check=False,
     )
     if result.returncode:

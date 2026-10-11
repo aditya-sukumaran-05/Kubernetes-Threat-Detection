@@ -13,7 +13,38 @@ from typing import Sequence
 
 import psutil
 
+from telemetry.security import (
+    validate_gadget_version,
+    validate_k8s_name,
+    validate_k8s_selector,
+    validate_safe_output_path,
+)
+
 OUTPUT_FILE = "telemetry/data/runtime/runtime_events.jsonl"
+
+
+def build_runtime_gadget_command(
+    gadget_version: str = "v0.55.1",
+    namespace: str = "default",
+    selector: str = "app=webapp",
+    custom_bin: str | None = None,
+) -> list[str]:
+    """Build the Inspektor Gadget trace_exec command with input validation."""
+    gadget_version = validate_gadget_version(gadget_version)
+    namespace = validate_k8s_name(namespace, "namespace")
+    selector = validate_k8s_selector(selector, "selector")
+    gadget_cmd = resolve_gadget_executable(custom_bin)
+    return gadget_cmd + [
+        "run",
+        f"trace_exec:{gadget_version}",
+        "-n",
+        namespace,
+        "-l",
+        selector,
+        "--paths",
+        "--output",
+        "json",
+    ]
 
 
 def resolve_gadget_executable(custom_bin: str | None = None) -> list[str]:
@@ -152,6 +183,7 @@ def main() -> None:
         help="Custom path or command for the Inspektor Gadget executable.",
     )
     args = parser.parse_args()
+    args.output = str(validate_safe_output_path(args.output))
 
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
     gadget_dir = os.path.join(os.path.expanduser("~"), "bin")
@@ -161,21 +193,15 @@ def main() -> None:
     pid_file = os.path.join(os.path.dirname(args.output) or ".", ".runtime_collector.pid")
     check_and_acquire_pid(pid_file)
 
-    gadget_cmd = resolve_gadget_executable(args.gadget_bin)
-    full_command = gadget_cmd + [
-        "run",
-        f"trace_exec:{args.gadget_version}",
-        "-n",
-        args.namespace,
-        "-l",
-        args.selector,
-        "--paths",
-        "--output",
-        "json",
-    ]
+    full_command = build_runtime_gadget_command(
+        gadget_version=args.gadget_version,
+        namespace=args.namespace,
+        selector=args.selector,
+        custom_bin=args.gadget_bin,
+    )
 
     print(f"Starting Kubernetes runtime process telemetry collector for {args.selector} in {args.namespace}...", flush=True)
-    print(f"Using Gadget binary: {' '.join(gadget_cmd)}", flush=True)
+    print(f"Using Gadget binary: {' '.join(full_command)}", flush=True)
     print("Press Ctrl+C to stop.", flush=True)
 
     process: subprocess.Popen[str] | None = None

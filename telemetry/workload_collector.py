@@ -9,6 +9,12 @@ import time
 
 import psutil
 
+from telemetry.security import (
+    validate_k8s_name,
+    validate_k8s_selector,
+    validate_safe_output_path,
+)
+
 OUTPUT_FILE = "telemetry/data/workload_metrics.csv"
 LABEL = "normal"
 INTERVAL = 5
@@ -32,6 +38,8 @@ def get_webapp_pod(
     jitter: float = DEFAULT_JITTER,
 ) -> str:
     """Discover webapp Pod name using label selector with bounded retries."""
+    namespace = validate_k8s_name(namespace, "namespace")
+    selector = validate_k8s_selector(selector, "selector")
     last_error: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
@@ -81,6 +89,8 @@ def get_metrics(
     Transient Metrics Server failures (e.g. reconciling or momentarily unavailable)
     are retried up to max_retries times. Persistent failures raise MetricsCollectionError.
     """
+    pod_name = validate_k8s_name(pod_name, "pod_name")
+    namespace = validate_k8s_name(namespace, "namespace")
     last_error: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
@@ -129,6 +139,9 @@ def main() -> None:
     args = parser.parse_args()
     if args.interval <= 0:
         raise ValueError("interval must be positive")
+    args.output = str(validate_safe_output_path(args.output))
+    args.namespace = validate_k8s_name(args.namespace, "namespace")
+    args.selector = validate_k8s_selector(args.selector, "selector")
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
     file_exists = os.path.exists(args.output)
     if not file_exists:

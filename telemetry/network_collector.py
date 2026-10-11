@@ -7,6 +7,12 @@ import sys
 import psutil
 
 from telemetry.runtime_collector import resolve_gadget_executable
+from telemetry.security import (
+    validate_gadget_version,
+    validate_k8s_name,
+    validate_k8s_selector,
+    validate_safe_output_path,
+)
 
 OUTPUT_FILE = "telemetry/data/network/network_events.jsonl"
 
@@ -18,6 +24,9 @@ def build_network_gadget_command(
     custom_bin: str | None = None,
 ) -> list[str]:
     """Build the Inspektor Gadget trace_tcp command using the resolved executable."""
+    gadget_version = validate_gadget_version(gadget_version)
+    namespace = validate_k8s_name(namespace, "namespace")
+    selector = validate_k8s_selector(selector, "selector")
     gadget_cmd = resolve_gadget_executable(custom_bin)
     return gadget_cmd + [
         "run",
@@ -43,6 +52,7 @@ def main() -> None:
         help="Custom path or command for the Inspektor Gadget executable.",
     )
     args = parser.parse_args()
+    args.output = str(validate_safe_output_path(args.output))
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
 
     candidate_pids = [
