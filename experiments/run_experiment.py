@@ -23,7 +23,11 @@ from experiments.orchestration import (
     validate_capture_files,
     write_metadata,
 )
-from telemetry.security import validate_k8s_name
+from telemetry.security import (
+    validate_k8s_name,
+    validate_positive_float,
+    validate_positive_int,
+)
 
 CPU_ATTACK_PID_FILE = "/tmp/kubernetes-threat-detection-cpu-attack.pid"
 
@@ -38,15 +42,11 @@ def activity_command(scenario: str, config: dict[str, Any], cluster: dict[str, A
     definition = config["scenarios"][scenario]
     namespace = validate_k8s_name(cluster["namespace"], "namespace")
     if scenario in {"network_normal", "workload_normal", "workload_attack", "fusion_normal"}:
-        requests = int(definition["network_requests"])
-        delay = float(definition["request_delay_seconds"])
-        if requests <= 0 or delay < 0:
-            raise ValueError(f"Invalid network request parameters: requests={requests}, delay={delay}")
+        requests = validate_positive_int(definition["network_requests"], "network_requests")
+        delay = validate_positive_float(definition["request_delay_seconds"], "request_delay_seconds", allow_zero=True)
         script = f"i=0; while [ $i -lt {requests} ]; do wget -q -O /dev/null http://webapp; i=$((i+1)); sleep {delay}; done"
     elif scenario in {"network_attack", "fusion_attack"}:
-        duration = int(definition["network_duration_seconds"])
-        if duration <= 0:
-            raise ValueError(f"Invalid duration: duration={duration}")
+        duration = validate_positive_int(definition["network_duration_seconds"], "network_duration_seconds")
         script = f"end=$(( $(date +%s) + {duration} )); while [ \"$(date +%s)\" -lt \"$end\" ]; do wget -q -O /dev/null http://webapp; done"
     else:
         return None
@@ -142,8 +142,20 @@ def run_scenario(config: dict[str, Any], scenario: str, project_root: Path, exec
             [sys.executable, "telemetry/network_collector.py", "--output", str(run_dir / "network.jsonl")],
             cwd=project_root, stdout=events_log, stderr=subprocess.STDOUT, text=True,
         )
+        workload_interval = validate_positive_float(
+            config["collectors"]["workload_interval_seconds"], "workload_interval_seconds"
+        )
+        warmup_seconds = validate_positive_float(
+            definition.get("warmup_seconds", 0), "warmup_seconds", allow_zero=True
+        )
+        attack_seconds = validate_positive_float(
+            definition.get("attack_seconds", 0), "attack_seconds", allow_zero=True
+        )
+        cooldown_seconds = validate_positive_float(
+            definition.get("cooldown_seconds", 0), "cooldown_seconds", allow_zero=True
+        )
         workload_collector = subprocess.Popen(
-            [sys.executable, "telemetry/workload_collector.py", "--output", str(run_dir / "workload.csv"), "--interval", str(config["collectors"]["workload_interval_seconds"])],
+            [sys.executable, "telemetry/workload_collector.py", "--output", str(run_dir / "workload.csv"), "--interval", str(workload_interval)],
             cwd=project_root, stdout=events_log, stderr=subprocess.STDOUT, text=True,
         )
         time.sleep(2)
@@ -151,7 +163,7 @@ def run_scenario(config: dict[str, Any], scenario: str, project_root: Path, exec
             raise RuntimeError("a collector exited before confirmation")
         metadata.record("network and workload collectors confirmed running")
         save_metadata(run_dir, metadata)
-        time.sleep(definition["warmup_seconds"])
+        time.sleep(warmup_seconds)
 
         command = activity_command(scenario, config, cluster)
         if scenario in {"network_attack", "fusion_attack"}:
@@ -169,7 +181,7 @@ def run_scenario(config: dict[str, Any], scenario: str, project_root: Path, exec
             if scenario not in {"network_attack", "fusion_attack"}:
                 metadata.record("normal traffic started")
         if attack_workload:
-            time.sleep(definition["attack_seconds"])
+            time.sleep(attack_seconds)
             stop(attack_workload)
             cpu_cleanup_error = stop_cpu_attack(cluster)
             metadata.workload_attack_end_time_utc = utc_now()
@@ -180,7 +192,7 @@ def run_scenario(config: dict[str, Any], scenario: str, project_root: Path, exec
                 metadata.network_attack_end_time_utc = utc_now()
                 metadata.record("network burst ended", metadata.network_attack_end_time_utc)
         metadata.attack_end_time_utc = max(filter(None, [metadata.network_attack_end_time_utc, metadata.workload_attack_end_time_utc]), default=None)
-        time.sleep(definition["cooldown_seconds"])
+        time.sleep(cooldown_seconds)
         metadata.experiment_end_time_utc = metadata.record("experiment capture ended")
         metadata.status = "completed"
     except KeyboardInterrupt:

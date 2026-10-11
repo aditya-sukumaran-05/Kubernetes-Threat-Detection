@@ -183,9 +183,10 @@ def main() -> None:
         help="Custom path or command for the Inspektor Gadget executable.",
     )
     args = parser.parse_args()
-    args.output = str(validate_safe_output_path(args.output))
+    safe_output = validate_safe_output_path(args.output)
+    args.output = str(safe_output)
 
-    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+    os.makedirs(safe_output.parent, exist_ok=True)
     gadget_dir = os.path.join(os.path.expanduser("~"), "bin")
     env = os.environ.copy()
     env["PATH"] = gadget_dir + os.pathsep + env.get("PATH", "")

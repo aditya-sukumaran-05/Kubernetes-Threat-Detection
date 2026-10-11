@@ -12,6 +12,8 @@ import psutil
 from telemetry.security import (
     validate_k8s_name,
     validate_k8s_selector,
+    validate_positive_float,
+    validate_positive_int,
     validate_safe_output_path,
 )
 
@@ -40,6 +42,10 @@ def get_webapp_pod(
     """Discover webapp Pod name using label selector with bounded retries."""
     namespace = validate_k8s_name(namespace, "namespace")
     selector = validate_k8s_selector(selector, "selector")
+    max_retries = validate_positive_int(max_retries, "max_retries", allow_zero=True)
+    base_backoff = validate_positive_float(base_backoff, "base_backoff")
+    max_backoff = validate_positive_float(max_backoff, "max_backoff")
+    jitter = validate_positive_float(jitter, "jitter", allow_zero=True)
     last_error: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
@@ -91,6 +97,10 @@ def get_metrics(
     """
     pod_name = validate_k8s_name(pod_name, "pod_name")
     namespace = validate_k8s_name(namespace, "namespace")
+    max_retries = validate_positive_int(max_retries, "max_retries", allow_zero=True)
+    base_backoff = validate_positive_float(base_backoff, "base_backoff")
+    max_backoff = validate_positive_float(max_backoff, "max_backoff")
+    jitter = validate_positive_float(jitter, "jitter", allow_zero=True)
     last_error: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
@@ -137,12 +147,14 @@ def main() -> None:
     parser.add_argument("--max-retries", type=int, default=DEFAULT_MAX_RETRIES)
     parser.add_argument("--base-backoff", type=float, default=DEFAULT_BASE_BACKOFF)
     args = parser.parse_args()
-    if args.interval <= 0:
-        raise ValueError("interval must be positive")
-    args.output = str(validate_safe_output_path(args.output))
+    args.interval = validate_positive_float(args.interval, "interval")
+    args.max_retries = validate_positive_int(args.max_retries, "max_retries", allow_zero=True)
+    args.base_backoff = validate_positive_float(args.base_backoff, "base_backoff")
+    safe_output = validate_safe_output_path(args.output)
+    args.output = str(safe_output)
     args.namespace = validate_k8s_name(args.namespace, "namespace")
     args.selector = validate_k8s_selector(args.selector, "selector")
-    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+    os.makedirs(safe_output.parent, exist_ok=True)
     file_exists = os.path.exists(args.output)
     if not file_exists:
         with open(args.output, "w", newline="") as file:
