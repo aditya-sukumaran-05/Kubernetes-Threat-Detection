@@ -723,15 +723,127 @@ def test_experiment_preflight_fails_before_write_or_subprocess_on_invalid_k8s_id
 def test_experiment_preflight_fails_before_write_or_subprocess_on_escaping_output_dir(
     base_experiment_config: dict, tmp_path: Path
 ) -> None:
-    outside_dir = tmp_path.parent / "outside_directory"
-    for bad_dir in ["../../escaped_dir", "../outside", str(outside_dir), "", "   "]:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+
+    # Preexisting external candidate directory with sentinel artifact
+    outside_dir = (tmp_path / "candidate_outside_abs").resolve()
+    outside_dir.mkdir()
+    canary = outside_dir / "canary.txt"
+    canary.write_text("sentinel_canary_payload", encoding="utf-8")
+    canary_stat_before = canary.stat()
+
+    # Candidate destinations for relative traversals
+    candidate_parent = (project_root / "../outside_rel").resolve()
+    candidate_grandparent = (project_root / "../../escaped_dir").resolve()
+    assert not candidate_parent.exists()
+    assert not candidate_grandparent.exists()
+
+    # 1. Traversal via relative parent
+    bad_cfg = copy.deepcopy(base_experiment_config)
+    bad_cfg["output_directory"] = "../outside_rel"
+    with patch("subprocess.Popen") as mock_popen:
+        with pytest.raises(ValueError, match="Path traversal detected"):
+            run_scenario(bad_cfg, "network_normal", project_root=project_root, execute=True)
+        mock_popen.assert_not_called()
+    assert not candidate_parent.exists(), "Traversal destination was created despite validation failure"
+
+    # 2. Traversal via relative grandparent
+    bad_cfg = copy.deepcopy(base_experiment_config)
+    bad_cfg["output_directory"] = "../../escaped_dir"
+    with patch("subprocess.Popen") as mock_popen:
+        with pytest.raises(ValueError, match="Path traversal detected"):
+            run_scenario(bad_cfg, "network_normal", project_root=project_root, execute=True)
+        mock_popen.assert_not_called()
+    assert not candidate_grandparent.exists(), "Grandparent traversal destination was created"
+
+    # 3. Absolute path to external directory (outside project root)
+    bad_cfg = copy.deepcopy(base_experiment_config)
+    bad_cfg["output_directory"] = str(outside_dir)
+    with patch("subprocess.Popen") as mock_popen:
+        with pytest.raises(ValueError, match="Path traversal detected"):
+            run_scenario(bad_cfg, "network_normal", project_root=project_root, execute=True)
+        mock_popen.assert_not_called()
+    assert list(outside_dir.iterdir()) == [canary], "Artifacts created in external candidate destination"
+    assert canary.read_text(encoding="utf-8") == "sentinel_canary_payload"
+    assert canary.stat().st_mtime_ns == canary_stat_before.st_mtime_ns
+
+    # 4. Empty and whitespace output directories
+    for empty_val in ["", "   "]:
         bad_cfg = copy.deepcopy(base_experiment_config)
-        bad_cfg["output_directory"] = bad_dir
+        bad_cfg["output_directory"] = empty_val
         with patch("subprocess.Popen") as mock_popen:
-            with pytest.raises(ValueError):
-                run_scenario(bad_cfg, "network_normal", project_root=tmp_path, execute=True)
+            with pytest.raises(ValueError, match="output_directory cannot be empty"):
+                run_scenario(bad_cfg, "network_normal", project_root=project_root, execute=True)
             mock_popen.assert_not_called()
-        assert not (tmp_path / "experiments").exists()
+
+    # Verify no artifacts created inside project root
+    assert not (project_root / "experiments").exists()
+    assert not (project_root / "runs").exists()
+    assert list(project_root.iterdir()) == []
+
+
+def test_experiment_preflight_fails_before_write_or_subprocess_on_symlink_output_escape(
+    base_experiment_config: dict, tmp_path: Path
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+
+    external_dest = (tmp_path / "external_symlink_dest").resolve()
+    external_dest.mkdir()
+    canary = external_dest / "canary.txt"
+    canary.write_text("protected_symlink_sentinel", encoding="utf-8")
+    canary_stat_before = canary.stat()
+
+    # Test Case A: Output directory is a symlink resolving outside project root
+    symlink_output = project_root / "symlinked_runs"
+    try:
+        symlink_output.symlink_to(external_dest, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("Symlink creation not permitted in this environment")
+
+    bad_cfg = copy.deepcopy(base_experiment_config)
+    bad_cfg["output_directory"] = "symlinked_runs"
+
+    with patch("subprocess.Popen") as mock_popen:
+        with pytest.raises(ValueError, match="Path traversal detected"):
+            run_scenario(bad_cfg, "network_normal", project_root=project_root, execute=True)
+        mock_popen.assert_not_called()
+
+    assert list(external_dest.iterdir()) == [canary], "Files were created in external symlink destination"
+    assert canary.read_text(encoding="utf-8") == "protected_symlink_sentinel"
+    assert canary.stat().st_mtime_ns == canary_stat_before.st_mtime_ns
+    assert not (project_root / "experiments").exists()
+
+    # Test Case B: Run directory itself is a pre-existing symlink resolving outside output root
+    normal_output_dir = project_root / "experiments" / "runs"
+    normal_output_dir.mkdir(parents=True)
+    fixed_run_id = "20261011T000000Z_network_normal_planted_link"
+    run_dir_symlink = normal_output_dir / fixed_run_id
+
+    external_run_dest = (tmp_path / "external_run_dest").resolve()
+    external_run_dest.mkdir()
+    run_canary = external_run_dest / "canary.txt"
+    run_canary.write_text("protected_run_sentinel", encoding="utf-8")
+    run_canary_stat_before = run_canary.stat()
+
+    try:
+        run_dir_symlink.symlink_to(external_run_dest, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("Symlink creation not permitted in this environment")
+
+    cfg = copy.deepcopy(base_experiment_config)
+    cfg["output_directory"] = "experiments/runs"
+
+    with patch("experiments.run_experiment.experiment_id", return_value=fixed_run_id):
+        with patch("subprocess.Popen") as mock_popen:
+            with pytest.raises(ValueError, match="Path traversal detected"):
+                run_scenario(cfg, "network_normal", project_root=project_root, execute=True)
+            mock_popen.assert_not_called()
+
+    assert list(external_run_dest.iterdir()) == [run_canary], "Files created in external run destination"
+    assert run_canary.read_text(encoding="utf-8") == "protected_run_sentinel"
+    assert run_canary.stat().st_mtime_ns == run_canary_stat_before.st_mtime_ns
 
 
 def test_experiment_preflight_valid_plan_and_dry_run(
