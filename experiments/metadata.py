@@ -151,9 +151,12 @@ def load_run_capture_metadata(
                 rel_path = str(capture_path.resolve().relative_to(project_root))
             except ValueError:
                 rel_path = str(capture_path)
+            # Experiment runner contracts bind session_id to experiment_id by default,
+            # but allow an explicit session_id if specified in metadata.json.
+            run_session = str(raw.get("session_id") or raw["experiment_id"])
             captures.append(CaptureMetadata(
                 capture_id=f"{raw['experiment_id']}_{source}", source=source,
-                path=rel_path, session_id=raw["experiment_id"],
+                path=rel_path, session_id=run_session,
                 description=raw.get("notes", ""), label_intervals=_run_intervals(raw, source),
                 scenario=raw["scenario"], cluster_id=run_cluster,
             ))

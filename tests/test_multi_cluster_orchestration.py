@@ -459,7 +459,7 @@ def test_build_datasets_non_destructive_and_cluster_filtering(tmp_path: Path) ->
     assert (out_dir / "network_dataset.csv").exists()
 
     # Attempt build with overwrite=False fails safely
-    with pytest.raises(DatasetError, match="already contains dataset files"):
+    with pytest.raises(DatasetError, match="already exists and is non-empty"):
         build_datasets(proc_dir, out_dir, overwrite=False)
 
     # Filtered build by cluster_id
@@ -562,6 +562,18 @@ def test_preprocessing_separates_sessions_across_clusters_without_collision(tmp_
     (run_a / "metadata.json").write_text(json.dumps({**make_meta("exp-a", "cluster-a"), "experiment_id": "exp-a", "session_id": "same-session"}), encoding="utf-8")
     (run_b / "metadata.json").write_text(json.dumps({**make_meta("exp-b", "cluster-b"), "experiment_id": "exp-b", "session_id": "same-session"}), encoding="utf-8")
 
+    # Verify metadata loader loads captures sharing session_id but distinct cluster_id and capture_id
+    captures = load_run_capture_metadata(runs_dir=runs_dir)
+    assert len(captures) == 4
+    assert {c.session_id for c in captures} == {"same-session"}
+    assert {c.cluster_id for c in captures} == {"cluster-a", "cluster-b"}
+    assert {c.capture_id for c in captures} == {
+        "exp-a_network",
+        "exp-a_workload",
+        "exp-b_network",
+        "exp-b_workload",
+    }
+
     out_dir = tmp_path / "out"
     summary = run_preprocessing(None, out_dir, runs_dir=runs_dir, overwrite=False)
 
@@ -569,8 +581,53 @@ def test_preprocessing_separates_sessions_across_clusters_without_collision(tmp_
     clusters_aligned = {s["cluster_id"] for s in summary["aligned_sessions"]}
     assert clusters_aligned == {"cluster-a", "cluster-b"}
     # Verify separate aligned output filenames exist and are isolated
-    assert (out_dir / "aligned" / "cluster-a_exp-a.csv").exists()
-    assert (out_dir / "aligned" / "cluster-b_exp-b.csv").exists()
+    assert (out_dir / "aligned" / "cluster-a_same-session.csv").exists()
+    assert (out_dir / "aligned" / "cluster-b_same-session.csv").exists()
+
+
+def test_build_datasets_rejects_arbitrary_existing_files(tmp_path: Path) -> None:
+    from ml.datasets import build_datasets, DatasetError
+
+    proc_dir = tmp_path / "processed"
+    proc_dir.mkdir(parents=True)
+    out_dir = tmp_path / "datasets"
+    out_dir.mkdir(parents=True)
+    unrelated = out_dir / "unrelated.txt"
+    unrelated.write_text("user note", encoding="utf-8")
+
+    with pytest.raises(DatasetError, match="already exists and is non-empty"):
+        build_datasets(proc_dir, out_dir, overwrite=False)
+
+    # Content of unrelated.txt was preserved
+    assert unrelated.read_text(encoding="utf-8") == "user note"
+
+
+def test_run_all_preflight_blocks_non_empty_destinations(tmp_path: Path) -> None:
+    from ml.run_all import run_all, WorkflowError
+
+    fake_root = tmp_path / "project"
+    fake_root.mkdir()
+    phase1 = fake_root / "results" / "phase1_demo"
+    phase1.mkdir(parents=True)
+    dummy1 = phase1 / "dummy.txt"
+    dummy1.write_text("existing", encoding="utf-8")
+
+    with pytest.raises(WorkflowError, match="Phase 1 demo dir.*is non-empty"):
+        run_all(fake_root, overwrite=False)
+
+    assert dummy1.read_text(encoding="utf-8") == "existing"
+
+    # Also test ml_datasets non-empty
+    dummy1.unlink()
+    ml_datasets = fake_root / "results" / "ml_datasets"
+    ml_datasets.mkdir(parents=True)
+    dummy2 = ml_datasets / "dummy.txt"
+    dummy2.write_text("existing", encoding="utf-8")
+
+    with pytest.raises(WorkflowError, match="ML datasets dir.*is non-empty"):
+        run_all(fake_root, overwrite=False)
+
+    assert dummy2.read_text(encoding="utf-8") == "existing"
 
 
 def test_alignment_rejects_duplicate_timestamps_within_modality() -> None:

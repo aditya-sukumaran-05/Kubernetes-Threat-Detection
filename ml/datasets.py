@@ -135,16 +135,11 @@ def build_datasets(
     Unknown labels are excluded from supervised datasets, never inferred.  The
     fusion file is deliberately empty unless Phase 1 produced aligned windows.
     """
-    if not overwrite:
-        target_files = [
-            output_dir / "network_dataset.csv",
-            output_dir / "workload_dataset.csv",
-            output_dir / "fusion_dataset.csv",
-            output_dir / "dataset_summary.json",
-        ]
-        if output_dir.exists() and any(f.exists() for f in target_files):
+    if not overwrite and output_dir.exists():
+        existing_items = list(output_dir.iterdir())
+        if existing_items:
             raise DatasetError(
-                f"output directory {output_dir} already contains dataset files. Use overwrite=True or a distinct output location."
+                f"output directory {output_dir} already exists and is non-empty. Use overwrite=True or a distinct output location."
             )
 
     all_sources = sorted(processed_dir.glob("*.csv"))
