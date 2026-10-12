@@ -109,7 +109,16 @@ def _write_dataset(path: Path, rows: list[dict[str, str]], features: tuple[str, 
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _summary(name: str, path: Path, rows: list[dict[str, str]], all_rows: int, features: tuple[str, ...], limitation: str | None) -> DatasetSummary:
+def _summary(
+    name: str,
+    path: Path,
+    rows: list[dict[str, str]],
+    all_rows: int,
+    features: tuple[str, ...],
+    limitation: str | None,
+    read_path: Path | None = None,
+) -> DatasetSummary:
+    file_to_hash = read_path if read_path is not None else path
     return DatasetSummary(
         name=name,
         path=str(path),
@@ -119,7 +128,7 @@ def _summary(name: str, path: Path, rows: list[dict[str, str]], all_rows: int, f
         session_counts=dict(Counter(row["session_id"] for row in rows)),
         cluster_counts=dict(Counter(row.get("cluster_id") or "minikube" for row in rows)),
         features=features,
-        sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+        sha256=hashlib.sha256(file_to_hash.read_bytes()).hexdigest(),
         limitation=limitation,
     )
 
@@ -169,39 +178,56 @@ def build_datasets(
     workload = _select_labeled(workload_all)
     network_features = _feature_names(network_all, NETWORK_PREFIX)
     workload_features = _feature_names(workload_all, WORKLOAD_PREFIX)
+    from ml.pipeline_safety import atomic_replace_file, staging_directory
+
     network_path = output_dir / "network_dataset.csv"
     workload_path = output_dir / "workload_dataset.csv"
-    _write_dataset(network_path, network, network_features)
-    _write_dataset(workload_path, workload, workload_features)
-
-    aligned_dir = processed_dir.parent / "aligned"
-    aligned_paths = sorted(aligned_dir.glob("*.csv")) if aligned_dir.exists() else []
-    raw_aligned = [row for path in aligned_paths for row in read_csv(path)]
-    if cluster_id is not None:
-        raw_aligned = [row for row in raw_aligned if (row.get("cluster_id") or "minikube") == cluster_id]
-    fusion_all = _select_scenarios(raw_aligned, FUSION_SCENARIOS)
-    _validate_unique_windows(fusion_all, "fusion dataset")
-    fusion = [
-        row for row in _select_labeled(fusion_all)
-        if row.get("network_available") == "True" and row.get("workload_available") == "True"
-    ]
-    fusion_features = tuple(sorted(set(_feature_names(fusion_all, NETWORK_PREFIX)) | set(_feature_names(fusion_all, WORKLOAD_PREFIX))))
     fusion_path = output_dir / "fusion_dataset.csv"
-    _write_dataset(fusion_path, fusion, fusion_features)
 
-    summaries = {
-        "network": _summary("network", network_path, network, len(network_all), network_features, None),
-        "workload": _summary(
-            "workload", workload_path, workload, len(workload_all), workload_features,
-            None,
-        ),
-        "fusion": _summary(
-            "fusion", fusion_path, fusion, len(fusion_all), fusion_features,
-            None,
-        ),
-    }
     output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "dataset_summary.json").write_text(
-        json.dumps({name: summary.__dict__ for name, summary in summaries.items()}, indent=2), encoding="utf-8"
-    )
+    with staging_directory(output_dir.parent, prefix=f".staging_ds_{output_dir.name}_") as staged_dir:
+        staged_net = staged_dir / "network_dataset.csv"
+        staged_work = staged_dir / "workload_dataset.csv"
+        staged_fuse = staged_dir / "fusion_dataset.csv"
+
+        _write_dataset(staged_net, network, network_features)
+        _write_dataset(staged_work, workload, workload_features)
+
+        aligned_dir = processed_dir.parent / "aligned"
+        aligned_paths = sorted(aligned_dir.glob("*.csv")) if aligned_dir.exists() else []
+        raw_aligned = [row for path in aligned_paths for row in read_csv(path)]
+        if cluster_id is not None:
+            raw_aligned = [row for row in raw_aligned if (row.get("cluster_id") or "minikube") == cluster_id]
+        fusion_all = _select_scenarios(raw_aligned, FUSION_SCENARIOS)
+        _validate_unique_windows(fusion_all, "fusion dataset")
+        fusion = [
+            row for row in _select_labeled(fusion_all)
+            if row.get("network_available") == "True" and row.get("workload_available") == "True"
+        ]
+        fusion_features = tuple(sorted(set(_feature_names(fusion_all, NETWORK_PREFIX)) | set(_feature_names(fusion_all, WORKLOAD_PREFIX))))
+        _write_dataset(staged_fuse, fusion, fusion_features)
+
+        summaries = {
+            "network": _summary("network", network_path, network, len(network_all), network_features, None, read_path=staged_net),
+            "workload": _summary(
+                "workload", workload_path, workload, len(workload_all), workload_features,
+                None,
+                read_path=staged_work,
+            ),
+            "fusion": _summary(
+                "fusion", fusion_path, fusion, len(fusion_all), fusion_features,
+                None,
+                read_path=staged_fuse,
+            ),
+        }
+        staged_summary = staged_dir / "dataset_summary.json"
+        staged_summary.write_text(
+            json.dumps({name: summary.__dict__ for name, summary in summaries.items()}, indent=2), encoding="utf-8"
+        )
+
+        atomic_replace_file(staged_net, network_path)
+        atomic_replace_file(staged_work, workload_path)
+        atomic_replace_file(staged_fuse, fusion_path)
+        atomic_replace_file(staged_summary, output_dir / "dataset_summary.json")
+
     return summaries

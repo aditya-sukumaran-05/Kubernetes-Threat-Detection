@@ -22,10 +22,10 @@ def write_markdown(path: Path, report: dict[str, object]) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def run(project_root: Path) -> dict[str, object]:
+def run(project_root: Path, overwrite: bool = False) -> dict[str, object]:
     results_dir = project_root / "results"
-    manifest = build_manifest(project_root / "experiments" / "runs", results_dir / "experiment_manifest.json")
-    ablation = run_all(project_root)
+    manifest = build_manifest(project_root / "experiments" / "runs", results_dir / "experiment_manifest.json", overwrite=overwrite)
+    ablation = run_all(project_root, overwrite=overwrite)
     quality = build_data_quality_report(results_dir / "experiment_manifest.json", results_dir / "phase1_demo" / "processed", results_dir)
     importance = generate_feature_importance(results_dir, project_root / "configs")
     figures = generate_figures(results_dir, ablation["experiments"])
@@ -48,8 +48,9 @@ def run(project_root: Path) -> dict[str, object]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-root", type=Path, default=Path("."))
+    parser.add_argument("--overwrite", action="store_true", default=False, help="Explicitly allow overwriting outputs.")
     args = parser.parse_args()
-    print(json.dumps(run(args.project_root.resolve()), indent=2))
+    print(json.dumps(run(args.project_root.resolve(), overwrite=args.overwrite), indent=2))
 
 
 if __name__ == "__main__":

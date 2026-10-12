@@ -11,6 +11,7 @@ from pathlib import Path
 
 from experiments.alignment import align_feature_windows
 from experiments.metadata import assign_labels, load_capture_metadata, load_run_capture_metadata
+from ml.pipeline_safety import atomic_replace_file, safe_replace_dir, staging_directory
 from telemetry.features.network import extract_network_features
 from telemetry.features.workload import extract_workload_features
 from telemetry.schemas import load_network_events, load_workload_samples
@@ -91,99 +92,105 @@ def run(
     distinct_clusters = {capture.cluster_id or "minikube" for capture in captures}
     multi_cluster_run = len(distinct_clusters) > 1
 
-    processed_dir.mkdir(parents=True, exist_ok=True)
-    aligned_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with staging_directory(output_dir.parent, prefix=f".staging_prep_{output_dir.name}_") as staged_dir:
+        staged_processed = staged_dir / "processed"
+        staged_aligned = staged_dir / "aligned"
+        staged_processed.mkdir(parents=True, exist_ok=True)
+        staged_aligned.mkdir(parents=True, exist_ok=True)
 
-    if overwrite:
-        for stale in processed_dir.glob("*.csv"):
-            stale.unlink()
-        for stale in aligned_dir.glob("*.csv"):
-            stale.unlink()
-
-    processed: dict[str, list[dict[str, object]]] = {}
-    summary: dict[str, object] = {
-        "inputs": {
-            "metadata_path": str(metadata_path) if metadata_path else None,
-            "runs_dir": str(runs_dir) if runs_dir else None,
-            "cluster_filter": cluster_id,
-        },
-        "output_dir": str(output_dir),
-        "captures": {},
-        "aligned_sessions": [],
-        "cluster_counts": {},
-        "limitations": [],
-    }
-
-    cluster_counter: Counter[str] = Counter()
-
-    for capture in captures:
-        raw_path = Path(capture.path)
-        if not raw_path.is_absolute():
-            candidate = project_root / raw_path
-            if candidate.exists():
-                raw_path = candidate
-            elif metadata_path and (metadata_path.parent / raw_path).exists():
-                raw_path = metadata_path.parent / raw_path
-            elif metadata_path and (metadata_path.parent.parent / raw_path).exists():
-                raw_path = metadata_path.parent.parent / raw_path
-            else:
-                raw_path = candidate
-
-        rows = (
-            extract_network_features(load_network_events(raw_path))
-            if capture.source == "network"
-            else extract_workload_features(load_workload_samples(raw_path))
-        )
-        labeled = assign_labels(rows, capture)
-        processed[capture.capture_id] = labeled
-
-        cid = capture.cluster_id or "minikube"
-        cluster_counter[cid] += len(labeled)
-
-        # Collision-safe output filename across multi-cluster runs
-        cap_file_name = f"{cid}_{capture.capture_id}.csv" if multi_cluster_run else f"{capture.capture_id}.csv"
-        out_csv = processed_dir / cap_file_name
-        csv_hash = write_csv(out_csv, labeled)
-
-        summary["captures"][capture.capture_id] = {
-            "source": capture.source,
-            "session_id": capture.session_id,
-            "cluster_id": cid,
-            "input_path": str(raw_path),
-            "output_path": str(out_csv),
-            "sha256": csv_hash,
-            "windows": len(rows),
-            "labels": dict(Counter(str(row["label"]) for row in labeled)),
+        processed: dict[str, list[dict[str, object]]] = {}
+        summary: dict[str, object] = {
+            "inputs": {
+                "metadata_path": str(metadata_path) if metadata_path else None,
+                "runs_dir": str(runs_dir) if runs_dir else None,
+                "cluster_filter": cluster_id,
+            },
+            "output_dir": str(output_dir),
+            "captures": {},
+            "aligned_sessions": [],
+            "cluster_counts": {},
+            "limitations": [],
         }
 
-    summary["cluster_counts"] = dict(cluster_counter)
+        cluster_counter: Counter[str] = Counter()
 
-    # Key session groups by (cluster_id, session_id) so same session IDs across distinct clusters never cross-align
-    sessions: dict[tuple[str, str], dict[str, list[dict[str, object]]]] = defaultdict(dict)
-    for capture in captures:
-        cid = capture.cluster_id or "minikube"
-        sessions[(cid, capture.session_id)][capture.source] = processed[capture.capture_id]
+        for capture in captures:
+            raw_path = Path(capture.path)
+            if not raw_path.is_absolute():
+                candidate = project_root / raw_path
+                if candidate.exists():
+                    raw_path = candidate
+                elif metadata_path and (metadata_path.parent / raw_path).exists():
+                    raw_path = metadata_path.parent / raw_path
+                elif metadata_path and (metadata_path.parent.parent / raw_path).exists():
+                    raw_path = metadata_path.parent.parent / raw_path
+                else:
+                    raw_path = candidate
 
-    for (cid, session_id), dimensions in sorted(sessions.items()):
-        if {"network", "workload"}.issubset(dimensions):
-            aligned = align_feature_windows(dimensions["network"], dimensions["workload"])
-            aligned_file_name = f"{cid}_{session_id}.csv" if multi_cluster_run else f"{session_id}.csv"
-            aligned_csv = aligned_dir / aligned_file_name
-            aligned_hash = write_csv(aligned_csv, aligned)
-            aligned_cluster = str(aligned[0].get("cluster_id") or "minikube") if aligned else cid
-            summary["aligned_sessions"].append({
-                "session_id": session_id,
-                "cluster_id": aligned_cluster,
-                "windows": len(aligned),
-                "output_path": str(aligned_csv),
-                "sha256": aligned_hash,
-            })
-    if not summary["aligned_sessions"]:
-        summary["limitations"].append(
-            "No simultaneous network and workload session is available; no fused dataset was produced."
-        )
-    output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+            rows = (
+                extract_network_features(load_network_events(raw_path))
+                if capture.source == "network"
+                else extract_workload_features(load_workload_samples(raw_path))
+            )
+            labeled = assign_labels(rows, capture)
+            processed[capture.capture_id] = labeled
+
+            cid = capture.cluster_id or "minikube"
+            cluster_counter[cid] += len(labeled)
+
+            # Collision-safe output filename across multi-cluster runs
+            cap_file_name = f"{cid}_{capture.capture_id}.csv" if multi_cluster_run else f"{capture.capture_id}.csv"
+            staged_csv = staged_processed / cap_file_name
+            final_csv = processed_dir / cap_file_name
+            csv_hash = write_csv(staged_csv, labeled)
+
+            summary["captures"][capture.capture_id] = {
+                "source": capture.source,
+                "session_id": capture.session_id,
+                "cluster_id": cid,
+                "input_path": str(raw_path),
+                "output_path": str(final_csv),
+                "sha256": csv_hash,
+                "windows": len(rows),
+                "labels": dict(Counter(str(row["label"]) for row in labeled)),
+            }
+
+        summary["cluster_counts"] = dict(cluster_counter)
+
+        # Key session groups by (cluster_id, session_id) so same session IDs across distinct clusters never cross-align
+        sessions: dict[tuple[str, str], dict[str, list[dict[str, object]]]] = defaultdict(dict)
+        for capture in captures:
+            cid = capture.cluster_id or "minikube"
+            sessions[(cid, capture.session_id)][capture.source] = processed[capture.capture_id]
+
+        for (cid, session_id), dimensions in sorted(sessions.items()):
+            if {"network", "workload"}.issubset(dimensions):
+                aligned = align_feature_windows(dimensions["network"], dimensions["workload"])
+                aligned_file_name = f"{cid}_{session_id}.csv" if multi_cluster_run else f"{session_id}.csv"
+                staged_aligned_csv = staged_aligned / aligned_file_name
+                final_aligned_csv = aligned_dir / aligned_file_name
+                aligned_hash = write_csv(staged_aligned_csv, aligned)
+                aligned_cluster = str(aligned[0].get("cluster_id") or "minikube") if aligned else cid
+                summary["aligned_sessions"].append({
+                    "session_id": session_id,
+                    "cluster_id": aligned_cluster,
+                    "windows": len(aligned),
+                    "output_path": str(final_aligned_csv),
+                    "sha256": aligned_hash,
+                })
+        if not summary["aligned_sessions"]:
+            summary["limitations"].append(
+                "No simultaneous network and workload session is available; no fused dataset was produced."
+            )
+        staged_summary = staged_dir / "summary.json"
+        staged_summary.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+
+        # Publish staged outputs safely to output_dir
+        safe_replace_dir(staged_processed, processed_dir)
+        safe_replace_dir(staged_aligned, aligned_dir)
+        atomic_replace_file(staged_summary, output_dir / "summary.json")
+
     return summary
 
 
