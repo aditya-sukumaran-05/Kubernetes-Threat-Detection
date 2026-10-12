@@ -44,16 +44,14 @@ def run(
     processed_dir = output_dir / "processed"
     aligned_dir = output_dir / "aligned"
 
-    # Destination check: fail safely if output exists and overwrite=False
+    # Complete destination preflight: reject any non-empty destination directory unless overwrite=True
     if not overwrite:
-        existing_files = [
-            *processed_dir.glob("*.csv"),
-            *aligned_dir.glob("*.csv"),
-        ]
-        if output_dir.exists() and (existing_files or (output_dir / "summary.json").exists()):
-            raise PreprocessingError(
-                f"output directory {output_dir} already contains data. Use overwrite=True or a distinct output location."
-            )
+        if output_dir.exists():
+            existing_items = list(output_dir.iterdir())
+            if existing_items:
+                raise PreprocessingError(
+                    f"output directory {output_dir} already exists and is non-empty. Use overwrite=True or specify a distinct output location."
+                )
 
     project_root = (
         runs_dir.resolve().parents[1]
@@ -73,6 +71,25 @@ def run(
         raise PreprocessingError(
             f"no captures discovered (metadata={metadata_path}, runs_dir={runs_dir}, cluster_id={cluster_id})"
         )
+
+    # Validate capture identity collisions across distinct clusters
+    seen_captures: dict[str, str] = {}
+    for capture in captures:
+        cid = capture.cluster_id or "minikube"
+        if capture.capture_id in seen_captures:
+            previous_cluster = seen_captures[capture.capture_id]
+            if previous_cluster != cid:
+                raise PreprocessingError(
+                    f"capture identity collision: '{capture.capture_id}' appears in multiple clusters ({previous_cluster} vs {cid})"
+                )
+            else:
+                raise PreprocessingError(
+                    f"duplicate capture identity: '{capture.capture_id}' in cluster {cid}"
+                )
+        seen_captures[capture.capture_id] = cid
+
+    distinct_clusters = {capture.cluster_id or "minikube" for capture in captures}
+    multi_cluster_run = len(distinct_clusters) > 1
 
     processed_dir.mkdir(parents=True, exist_ok=True)
     aligned_dir.mkdir(parents=True, exist_ok=True)
@@ -119,11 +136,14 @@ def run(
         )
         labeled = assign_labels(rows, capture)
         processed[capture.capture_id] = labeled
-        out_csv = processed_dir / f"{capture.capture_id}.csv"
-        csv_hash = write_csv(out_csv, labeled)
 
         cid = capture.cluster_id or "minikube"
         cluster_counter[cid] += len(labeled)
+
+        # Collision-safe output filename across multi-cluster runs
+        cap_file_name = f"{cid}_{capture.capture_id}.csv" if multi_cluster_run else f"{capture.capture_id}.csv"
+        out_csv = processed_dir / cap_file_name
+        csv_hash = write_csv(out_csv, labeled)
 
         summary["captures"][capture.capture_id] = {
             "source": capture.source,
@@ -138,15 +158,19 @@ def run(
 
     summary["cluster_counts"] = dict(cluster_counter)
 
-    sessions: dict[str, dict[str, list[dict[str, object]]]] = defaultdict(dict)
+    # Key session groups by (cluster_id, session_id) so same session IDs across distinct clusters never cross-align
+    sessions: dict[tuple[str, str], dict[str, list[dict[str, object]]]] = defaultdict(dict)
     for capture in captures:
-        sessions[capture.session_id][capture.source] = processed[capture.capture_id]
-    for session_id, dimensions in sessions.items():
+        cid = capture.cluster_id or "minikube"
+        sessions[(cid, capture.session_id)][capture.source] = processed[capture.capture_id]
+
+    for (cid, session_id), dimensions in sorted(sessions.items()):
         if {"network", "workload"}.issubset(dimensions):
             aligned = align_feature_windows(dimensions["network"], dimensions["workload"])
-            aligned_csv = aligned_dir / f"{session_id}.csv"
+            aligned_file_name = f"{cid}_{session_id}.csv" if multi_cluster_run else f"{session_id}.csv"
+            aligned_csv = aligned_dir / aligned_file_name
             aligned_hash = write_csv(aligned_csv, aligned)
-            aligned_cluster = str(aligned[0].get("cluster_id") or "minikube") if aligned else "minikube"
+            aligned_cluster = str(aligned[0].get("cluster_id") or "minikube") if aligned else cid
             summary["aligned_sessions"].append({
                 "session_id": session_id,
                 "cluster_id": aligned_cluster,

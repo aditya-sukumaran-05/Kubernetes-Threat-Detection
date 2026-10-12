@@ -22,8 +22,8 @@ def write_comparison(path: Path, rows: list[dict[str, object]]) -> None:
 
 def run_all(project_root: Path) -> dict[str, object]:
     phase1_dir = project_root / "results" / "phase1_demo"
-    run_preprocessing(project_root / "experiments" / "metadata" / "captures.json", phase1_dir, project_root / "experiments" / "runs")
-    summaries = build_datasets(phase1_dir / "processed", project_root / "results" / "ml_datasets")
+    run_preprocessing(project_root / "experiments" / "metadata" / "captures.json", phase1_dir, project_root / "experiments" / "runs", overwrite=True)
+    summaries = build_datasets(phase1_dir / "processed", project_root / "results" / "ml_datasets", overwrite=True)
     results: list[dict[str, object]] = []
     for name in ("network", "workload", "fusion"):
         config = load_config(project_root / "configs" / f"{name}.json")

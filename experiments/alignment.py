@@ -20,8 +20,18 @@ def align_feature_windows(
     }
     if len(clusters) > 1:
         raise ValueError("cannot align captures from different clusters")
-    network_by_window = {str(row["window_start"]): row for row in network_rows}
-    workload_by_window = {str(row["window_start"]): row for row in workload_rows}
+
+    def _index_windows(rows: list[dict[str, object]], modality: str) -> dict[str, dict[str, object]]:
+        indexed: dict[str, dict[str, object]] = {}
+        for r in rows:
+            w_start = str(r["window_start"])
+            if w_start in indexed:
+                raise ValueError(f"duplicate window_start '{w_start}' detected in {modality} telemetry")
+            indexed[w_start] = r
+        return indexed
+
+    network_by_window = _index_windows(network_rows, "network")
+    workload_by_window = _index_windows(workload_rows, "workload")
     aligned: list[dict[str, object]] = []
     for key in sorted(set(network_by_window) | set(workload_by_window)):
         network, workload = network_by_window.get(key), workload_by_window.get(key)

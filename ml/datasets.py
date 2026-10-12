@@ -127,7 +127,7 @@ def _summary(name: str, path: Path, rows: list[dict[str, str]], all_rows: int, f
 def build_datasets(
     processed_dir: Path,
     output_dir: Path,
-    overwrite: bool = True,
+    overwrite: bool = False,
     cluster_id: str | None = None,
 ) -> dict[str, DatasetSummary]:
     """Create network/workload datasets and only genuine same-session fusion.
@@ -142,7 +142,7 @@ def build_datasets(
             output_dir / "fusion_dataset.csv",
             output_dir / "dataset_summary.json",
         ]
-        if any(f.exists() for f in target_files):
+        if output_dir.exists() and any(f.exists() for f in target_files):
             raise DatasetError(
                 f"output directory {output_dir} already contains dataset files. Use overwrite=True or a distinct output location."
             )
@@ -185,6 +185,7 @@ def build_datasets(
     if cluster_id is not None:
         raw_aligned = [row for row in raw_aligned if (row.get("cluster_id") or "minikube") == cluster_id]
     fusion_all = _select_scenarios(raw_aligned, FUSION_SCENARIOS)
+    _validate_unique_windows(fusion_all, "fusion dataset")
     fusion = [
         row for row in _select_labeled(fusion_all)
         if row.get("network_available") == "True" and row.get("workload_available") == "True"

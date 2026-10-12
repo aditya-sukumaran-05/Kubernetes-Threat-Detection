@@ -360,7 +360,7 @@ def test_preprocessing_non_destructive_directory_protection(tmp_path: Path) -> N
     original_sha256 = summary1["captures"]["cap1"]["sha256"]
 
     # Second run without overwrite must fail safely with PreprocessingError
-    with pytest.raises(PreprocessingError, match="already contains data"):
+    with pytest.raises(PreprocessingError, match="already exists and is non-empty"):
         run_preprocessing(meta_file, out_dir, runs_dir=None, overwrite=False)
 
     # Verify existing output is byte-for-byte unchanged
@@ -464,8 +464,162 @@ def test_build_datasets_non_destructive_and_cluster_filtering(tmp_path: Path) ->
 
     # Filtered build by cluster_id
     out_cluster_b = tmp_path / "datasets_b"
-    summaries_b = build_datasets(proc_dir, out_cluster_b, cluster_id="cluster-b")
+    summaries_b = build_datasets(proc_dir, out_cluster_b, overwrite=False, cluster_id="cluster-b")
     assert summaries_b["network"].cluster_counts == {"cluster-b": 1}
     ds_b_rows = read_csv(out_cluster_b / "network_dataset.csv")
     assert len(ds_b_rows) == 1
     assert ds_b_rows[0]["cluster_id"] == "cluster-b"
+
+
+def test_preprocessing_rejects_arbitrary_existing_files(tmp_path: Path) -> None:
+    from experiments.run_preprocessing import PreprocessingError, run as run_preprocessing
+
+    out_dir = tmp_path / "out_with_stray"
+    out_dir.mkdir(parents=True)
+    (out_dir / "unrelated_notes.txt").write_text("should block run", encoding="utf-8")
+
+    meta_file = tmp_path / "captures.json"
+    net_file = tmp_path / "net.jsonl"
+    net_file.write_text('{"timestamp":"2026-09-20T10:00:01Z","type":"accept","src":{"addr":"10.0.0.1","port":80},"dst":{"addr":"10.0.0.2","port":40000}}\n', encoding="utf-8")
+    meta_content = {
+        "captures": [{
+            "id": "cap1",
+            "source": "network",
+            "path": str(net_file),
+            "session_id": "sess1",
+            "label_intervals": [],
+        }]
+    }
+    meta_file.write_text(json.dumps(meta_content), encoding="utf-8")
+
+    with pytest.raises(PreprocessingError, match="already exists and is non-empty"):
+        run_preprocessing(meta_file, out_dir, overwrite=False)
+
+
+def test_preprocessing_rejects_capture_id_collision_across_clusters(tmp_path: Path) -> None:
+    from experiments.run_preprocessing import PreprocessingError, run as run_preprocessing
+
+    runs_dir = tmp_path / "runs"
+    run_a = runs_dir / "cluster_a" / "run-1"
+    run_b = runs_dir / "cluster_b" / "run-1"
+    run_a.mkdir(parents=True)
+    run_b.mkdir(parents=True)
+
+    event_line = '{"timestamp":"2026-09-20T10:00:01Z","type":"accept","src":{"addr":"10.0.0.1","port":80},"dst":{"addr":"10.0.0.2","port":40000}}\n'
+    (run_a / "net.jsonl").write_text(event_line, encoding="utf-8")
+    (run_b / "net.jsonl").write_text(event_line, encoding="utf-8")
+
+    def make_meta(cluster: str):
+        return {
+            "experiment_id": "run-1",
+            "cluster_id": cluster,
+            "scenario": "network_normal",
+            "status": "validated",
+            "validation": {"valid": True},
+            "experiment_start_time_utc": "2026-09-20T10:00:00Z",
+            "experiment_end_time_utc": "2026-09-20T10:01:00Z",
+            "telemetry": {"network": "net.jsonl"},
+        }
+
+    (run_a / "metadata.json").write_text(json.dumps(make_meta("cluster-a")), encoding="utf-8")
+    (run_b / "metadata.json").write_text(json.dumps(make_meta("cluster-b")), encoding="utf-8")
+
+    out_dir = tmp_path / "out"
+    with pytest.raises(PreprocessingError, match="capture identity collision"):
+        run_preprocessing(None, out_dir, runs_dir=runs_dir, overwrite=False)
+
+
+def test_preprocessing_separates_sessions_across_clusters_without_collision(tmp_path: Path) -> None:
+    from experiments.run_preprocessing import run as run_preprocessing
+
+    runs_dir = tmp_path / "runs"
+    run_a = runs_dir / "cluster_a" / "run-1"
+    run_b = runs_dir / "cluster_b" / "run-1"
+    run_a.mkdir(parents=True)
+    run_b.mkdir(parents=True)
+
+    net_event = '{"timestamp":"2026-09-20T10:00:01Z","type":"accept","src":{"addr":"10.0.0.1","port":80},"dst":{"addr":"10.0.0.2","port":40000}}\n'
+    workload_sample = "timestamp,pod,cpu_millicores,memory_mib,label\n2026-09-20T10:00:01Z,webapp,1,13,normal\n"
+
+    (run_a / "net.jsonl").write_text(net_event, encoding="utf-8")
+    (run_a / "workload.csv").write_text(workload_sample, encoding="utf-8")
+    (run_b / "net.jsonl").write_text(net_event, encoding="utf-8")
+    (run_b / "workload.csv").write_text(workload_sample, encoding="utf-8")
+
+    def make_meta(exp_id: str, cluster: str):
+        return {
+            "experiment_id": exp_id,
+            "cluster_id": cluster,
+            "scenario": "fusion_normal",
+            "status": "validated",
+            "validation": {"valid": True},
+            "experiment_start_time_utc": "2026-09-20T10:00:00Z",
+            "experiment_end_time_utc": "2026-09-20T10:01:00Z",
+            "telemetry": {"network": "net.jsonl", "workload": "workload.csv"},
+        }
+
+    # Different experiment_id ensures capture_id does not collide, but session_id is "same-session" for both
+    (run_a / "metadata.json").write_text(json.dumps({**make_meta("exp-a", "cluster-a"), "experiment_id": "exp-a", "session_id": "same-session"}), encoding="utf-8")
+    (run_b / "metadata.json").write_text(json.dumps({**make_meta("exp-b", "cluster-b"), "experiment_id": "exp-b", "session_id": "same-session"}), encoding="utf-8")
+
+    out_dir = tmp_path / "out"
+    summary = run_preprocessing(None, out_dir, runs_dir=runs_dir, overwrite=False)
+
+    assert len(summary["aligned_sessions"]) == 2
+    clusters_aligned = {s["cluster_id"] for s in summary["aligned_sessions"]}
+    assert clusters_aligned == {"cluster-a", "cluster-b"}
+    # Verify separate aligned output filenames exist and are isolated
+    assert (out_dir / "aligned" / "cluster-a_exp-a.csv").exists()
+    assert (out_dir / "aligned" / "cluster-b_exp-b.csv").exists()
+
+
+def test_alignment_rejects_duplicate_timestamps_within_modality() -> None:
+    from experiments.alignment import align_feature_windows
+
+    net_row = {
+        "window_start": "2026-09-20T10:00:00Z",
+        "window_end": "2026-09-20T10:00:10Z",
+        "session_id": "s1",
+        "cluster_id": "minikube",
+        "label": "normal",
+        "attack_type": "normal",
+        "network_event_count": 1,
+    }
+    workload_row = {
+        "window_start": "2026-09-20T10:00:00Z",
+        "window_end": "2026-09-20T10:00:10Z",
+        "session_id": "s1",
+        "cluster_id": "minikube",
+        "label": "normal",
+        "attack_type": "normal",
+        "workload_sample_count": 1,
+    }
+
+    # Duplicate window_start in network telemetry must be rejected
+    with pytest.raises(ValueError, match="duplicate window_start '2026-09-20T10:00:00Z' detected in network telemetry"):
+        align_feature_windows([net_row, net_row], [workload_row])
+
+    # Duplicate window_start in workload telemetry must be rejected
+    with pytest.raises(ValueError, match="duplicate window_start '2026-09-20T10:00:00Z' detected in workload telemetry"):
+        align_feature_windows([net_row], [workload_row, workload_row])
+
+
+def test_build_manifest_safe_default_and_overwrite(tmp_path: Path) -> None:
+    from experiments.manifest import build_manifest
+
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir(parents=True)
+    out_manifest = tmp_path / "manifest.json"
+
+    # 1. First write succeeds with overwrite=False
+    manifest1 = build_manifest(runs_dir, out_manifest, overwrite=False)
+    assert manifest1["count"] == 0
+    assert out_manifest.exists()
+
+    # 2. Second write with default (overwrite=False) fails safely
+    with pytest.raises(ValueError, match="already exists"):
+        build_manifest(runs_dir, out_manifest)
+
+    # 3. Write with overwrite=True succeeds
+    manifest2 = build_manifest(runs_dir, out_manifest, overwrite=True)
+    assert manifest2["count"] == 0

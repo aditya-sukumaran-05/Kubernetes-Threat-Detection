@@ -22,7 +22,7 @@ def _row_count(path: Path) -> int:
 def build_manifest(
     runs_dir: Path,
     output_path: Path,
-    overwrite: bool = True,
+    overwrite: bool = False,
     cluster_id: str | None = None,
 ) -> dict[str, Any]:
     if not overwrite and output_path.exists():
@@ -62,8 +62,7 @@ def main() -> None:
     parser.add_argument("--runs-dir", type=Path, default=Path("experiments/runs"))
     parser.add_argument("--output", type=Path, default=Path("results/experiment_manifest.json"))
     parser.add_argument("--cluster-id", type=str, default=None, help="Filter manifest to a specific cluster ID.")
-    parser.add_argument("--overwrite", action="store_true", default=True, help="Allow overwriting existing manifest.")
-    parser.add_argument("--no-overwrite", action="store_false", dest="overwrite", help="Reject overwriting existing manifest.")
+    parser.add_argument("--overwrite", action="store_true", default=False, help="Explicitly allow overwriting existing manifest.")
     args = parser.parse_args()
     print(json.dumps(build_manifest(args.runs_dir, args.output, overwrite=args.overwrite, cluster_id=args.cluster_id), indent=2))
 
