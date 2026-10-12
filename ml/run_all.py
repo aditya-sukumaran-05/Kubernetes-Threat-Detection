@@ -13,6 +13,7 @@ import uuid
 from experiments.run_preprocessing import run as run_preprocessing
 from ml.datasets import build_datasets
 from ml.pipeline_safety import (
+    PublicationTransaction,
     WorkflowError,
     atomic_replace_file,
     safe_replace_dir,
@@ -183,14 +184,28 @@ def run_all(
         staged_manifest = staged_results / "batch_manifest.json"
         staged_manifest.write_text(json.dumps(batch_manifest, indent=2), encoding="utf-8")
 
-        # Safe Publication: Atomically publish staged directories and files into target_base
-        safe_replace_dir(staged_phase1, phase1_dir)
-        safe_replace_dir(staged_datasets, datasets_dir)
-        for exp_name in ("network", "workload", "fusion"):
-            safe_replace_dir(staged_results / exp_name, target_base / exp_name)
-        atomic_replace_file(staged_comp_csv, comp_csv)
-        atomic_replace_file(staged_comp_json, comp_json)
-        atomic_replace_file(staged_manifest, batch_manifest_file)
+        # Stage 6: Recoverable Transactional Publication
+        managed_rel_paths = [
+            "phase1_demo",
+            "ml_datasets",
+            "network",
+            "workload",
+            "fusion",
+            "ablation_comparison.csv",
+            "ablation_comparison.json",
+            "batch_manifest.json",
+        ]
+
+        with PublicationTransaction(target_base, run_id=run_id) as tx:
+            tx.backup_existing(managed_rel_paths)
+            tx.publish_dir(staged_phase1, phase1_dir)
+            tx.publish_dir(staged_datasets, datasets_dir)
+            for exp_name in ("network", "workload", "fusion"):
+                tx.publish_dir(staged_results / exp_name, target_base / exp_name)
+            tx.publish_file(staged_comp_csv, comp_csv)
+            tx.publish_file(staged_comp_json, comp_json)
+            tx.publish_file(staged_manifest, batch_manifest_file)
+            tx.commit()
 
     return report
 

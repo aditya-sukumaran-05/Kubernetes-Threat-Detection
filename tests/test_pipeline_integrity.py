@@ -294,3 +294,161 @@ def test_build_datasets_failure_leaves_existing_datasets_untouched(tmp_path: Pat
     # Original files remain completely untouched
     assert (out_dir / "network_dataset.csv").read_text(encoding="utf-8") == "original network"
     assert (out_dir / "workload_dataset.csv").read_text(encoding="utf-8") == "original workload"
+
+
+def test_arbitrary_nested_files_inside_replaced_directories_are_preserved(tmp_path: Path) -> None:
+    proj = _make_synthetic_project(tmp_path / "proj")
+    results = proj["root"] / "results"
+    _seed_valid_target_outputs(results)
+
+    # Seed arbitrary and nested files inside directories that get replaced during overwrite
+    p1_note = results / "phase1_demo" / "notes.txt"
+    p1_note.write_text("Researcher note in phase1", encoding="utf-8")
+    p1_proc_note = results / "phase1_demo" / "processed" / "custom_capture_note.txt"
+    p1_proc_note.parent.mkdir(parents=True, exist_ok=True)
+    p1_proc_note.write_text("Custom capture note", encoding="utf-8")
+    p1_nested = results / "phase1_demo" / "nested_archive" / "archive.log"
+    p1_nested.parent.mkdir(parents=True, exist_ok=True)
+    p1_nested.write_text("Archive log line", encoding="utf-8")
+
+    ds_note = results / "ml_datasets" / "researcher_notes.txt"
+    ds_note.write_text("Dataset notes: important context", encoding="utf-8")
+    ds_nested = results / "ml_datasets" / "custom_dir" / "extra.csv"
+    ds_nested.parent.mkdir(parents=True, exist_ok=True)
+    ds_nested.write_text("col1,col2\nval1,val2\n", encoding="utf-8")
+
+    net_note = results / "network" / "notes.md"
+    net_note.write_text("# Model Notes", encoding="utf-8")
+    net_custom_model = results / "network" / "models" / "baseline_model.joblib"
+    net_custom_model.parent.mkdir(parents=True, exist_ok=True)
+    net_custom_model.write_text("Custom baseline weights", encoding="utf-8")
+
+    report = run_all(proj["root"], overwrite=True)
+    assert report["status"] == "completed"
+
+    # All arbitrary and nested files must be strictly preserved
+    assert p1_note.read_text(encoding="utf-8") == "Researcher note in phase1"
+    assert p1_proc_note.read_text(encoding="utf-8") == "Custom capture note"
+    assert p1_nested.read_text(encoding="utf-8") == "Archive log line"
+    assert ds_note.read_text(encoding="utf-8") == "Dataset notes: important context"
+    assert ds_nested.read_text(encoding="utf-8") == "col1,col2\nval1,val2\n"
+    assert net_note.read_text(encoding="utf-8") == "# Model Notes"
+    assert net_custom_model.read_text(encoding="utf-8") == "Custom baseline weights"
+
+
+@pytest.mark.parametrize(
+    "fail_step",
+    [
+        "publish_phase1",
+        "publish_datasets",
+        "publish_network",
+        "publish_comp_csv",
+        "publish_manifest",
+    ],
+)
+def test_publication_rollback_on_failure_at_each_step(tmp_path: Path, fail_step: str) -> None:
+    from ml.pipeline_safety import PublicationTransaction
+
+    proj = _make_synthetic_project(tmp_path / f"proj_{fail_step}")
+    results = proj["root"] / "results"
+    initial_hashes = _seed_valid_target_outputs(results)
+
+    # Seed an arbitrary nested file in results as well
+    custom_nested = results / "phase1_demo" / "researcher_notes.txt"
+    custom_nested.write_text("Preserved researcher note", encoding="utf-8")
+    initial_hashes[str(custom_nested.relative_to(results))] = _sha256(custom_nested)
+
+    class InjectedPublicationTransaction(PublicationTransaction):
+        def publish_dir(self, staged_dir: Path, target_dir: Path, preserve_untracked: bool = True) -> None:
+            if fail_step == "publish_phase1" and target_dir.name == "phase1_demo":
+                raise RuntimeError("Injected publication failure at phase1_demo")
+            if fail_step == "publish_datasets" and target_dir.name == "ml_datasets":
+                raise RuntimeError("Injected publication failure at ml_datasets")
+            if fail_step == "publish_network" and target_dir.name == "network":
+                raise RuntimeError("Injected publication failure at network")
+            super().publish_dir(staged_dir, target_dir, preserve_untracked=preserve_untracked)
+
+        def publish_file(self, staged_file: Path, target_file: Path) -> None:
+            if fail_step == "publish_comp_csv" and target_file.name == "ablation_comparison.csv":
+                raise RuntimeError("Injected publication failure at ablation_comparison.csv")
+            if fail_step == "publish_manifest" and target_file.name == "batch_manifest.json":
+                raise RuntimeError("Injected publication failure at batch_manifest.json")
+            super().publish_file(staged_file, target_file)
+
+    with patch("ml.run_all.PublicationTransaction", InjectedPublicationTransaction):
+        with pytest.raises(RuntimeError, match="Injected publication failure"):
+            run_all(proj["root"], overwrite=True)
+
+    # Check complete rollback: every single file matches its initial SHA-256 hash
+    current_hashes = {
+        str(p.relative_to(results)): _sha256(p)
+        for p in results.rglob("*")
+        if p.is_file() and not p.name.startswith(".staging") and not p.name.startswith(".backup_tx")
+    }
+    assert current_hashes == initial_hashes
+    # Ensure transaction backup directory was cleaned up on rollback
+    assert not list(results.glob(".backup_tx_*"))
+
+
+def test_cleanup_never_deletes_unrelated_files_or_concurrent_staging(tmp_path: Path) -> None:
+    parent = tmp_path / "results"
+    parent.mkdir()
+
+    # Create concurrent staging directory from another run
+    concurrent_staging = parent / ".staging_run_other_99999999"
+    concurrent_staging.mkdir()
+    (concurrent_staging / "partial_data.csv").write_text("concurrent data", encoding="utf-8")
+
+    # Create unrelated user file
+    unrelated = parent / "unrelated_note.txt"
+    unrelated.write_text("do not delete", encoding="utf-8")
+
+    # Run staging_directory context manager
+    with staging_directory(parent, prefix=".staging_my_run_") as staged:
+        (staged / "dummy.txt").write_text("temporary", encoding="utf-8")
+        assert staged.exists()
+
+    # After exit: only staged is deleted, concurrent staging and unrelated note are untouched
+    assert not staged.exists()
+    assert concurrent_staging.exists()
+    assert (concurrent_staging / "partial_data.csv").read_text(encoding="utf-8") == "concurrent data"
+    assert unrelated.exists()
+    assert unrelated.read_text(encoding="utf-8") == "do not delete"
+
+
+def test_safe_replace_dir_standalone_preserves_nested_untracked_files_and_rolls_back(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    dst = tmp_path / "dst"
+    src.mkdir()
+    dst.mkdir()
+
+    (dst / "output.csv").write_text("old output", encoding="utf-8")
+    (dst / "notes.txt").write_text("important notes", encoding="utf-8")
+    nested_dir = dst / "nested"
+    nested_dir.mkdir()
+    (nested_dir / "extra.log").write_text("log line", encoding="utf-8")
+
+    (src / "output.csv").write_text("new output", encoding="utf-8")
+
+    # Replace dst with src
+    safe_replace_dir(src, dst, preserve_untracked=True)
+
+    # 1. output.csv was updated
+    assert (dst / "output.csv").read_text(encoding="utf-8") == "new output"
+    # 2. untracked files and nested files were preserved
+    assert (dst / "notes.txt").read_text(encoding="utf-8") == "important notes"
+    assert (dst / "nested" / "extra.log").read_text(encoding="utf-8") == "log line"
+
+    # Test rollback on failure
+    src2 = tmp_path / "src2"
+    src2.mkdir()
+    (src2 / "output.csv").write_text("failing output", encoding="utf-8")
+
+    with patch("shutil.copy2", side_effect=RuntimeError("Simulated copy failure during restore")):
+        with pytest.raises(RuntimeError, match="Simulated copy failure during restore"):
+            safe_replace_dir(src2, dst, preserve_untracked=True)
+
+    # Destination was rolled back to previous state
+    assert (dst / "output.csv").read_text(encoding="utf-8") == "new output"
+    assert (dst / "notes.txt").read_text(encoding="utf-8") == "important notes"
+    assert (dst / "nested" / "extra.log").read_text(encoding="utf-8") == "log line"
