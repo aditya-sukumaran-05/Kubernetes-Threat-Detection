@@ -19,15 +19,28 @@ def _row_count(path: Path) -> int:
         return sum(1 for line in handle if line.strip())
 
 
-def build_manifest(runs_dir: Path, output_path: Path) -> dict[str, Any]:
+def build_manifest(
+    runs_dir: Path,
+    output_path: Path,
+    overwrite: bool = True,
+    cluster_id: str | None = None,
+) -> dict[str, Any]:
+    if not overwrite and output_path.exists():
+        raise ValueError(
+            f"output manifest {output_path} already exists. Use overwrite=True or specify a distinct output path."
+        )
+
     entries = []
     metadata_paths = sorted({p for p in runs_dir.glob("**/metadata.json") if p.is_file()}) if runs_dir.exists() else []
     for metadata_path in metadata_paths:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        entry_cluster = metadata.get("cluster_id", "minikube")
+        if cluster_id is not None and entry_cluster != cluster_id:
+            continue
         telemetry = metadata.get("telemetry", {})
         entries.append({
             "experiment_id": metadata.get("experiment_id"),
-            "cluster_id": metadata.get("cluster_id", "minikube"),
+            "cluster_id": entry_cluster,
             "scenario": metadata.get("scenario"),
             "label": metadata.get("label"), "status": metadata.get("status"),
             "start_time_utc": metadata.get("experiment_start_time_utc"), "end_time_utc": metadata.get("experiment_end_time_utc"),
@@ -38,7 +51,7 @@ def build_manifest(runs_dir: Path, output_path: Path) -> dict[str, Any]:
             "sample_counts": {kind: _row_count(metadata_path.parent / filename) for kind, filename in telemetry.items()},
             "validation": metadata.get("validation", {}), "notes": metadata.get("notes", ""),
         })
-    manifest = {"experiments": entries, "count": len(entries)}
+    manifest = {"experiments": entries, "count": len(entries), "cluster_filter": cluster_id}
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return manifest
@@ -48,8 +61,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs-dir", type=Path, default=Path("experiments/runs"))
     parser.add_argument("--output", type=Path, default=Path("results/experiment_manifest.json"))
+    parser.add_argument("--cluster-id", type=str, default=None, help="Filter manifest to a specific cluster ID.")
+    parser.add_argument("--overwrite", action="store_true", default=True, help="Allow overwriting existing manifest.")
+    parser.add_argument("--no-overwrite", action="store_false", dest="overwrite", help="Reject overwriting existing manifest.")
     args = parser.parse_args()
-    print(json.dumps(build_manifest(args.runs_dir, args.output), indent=2))
+    print(json.dumps(build_manifest(args.runs_dir, args.output, overwrite=args.overwrite, cluster_id=args.cluster_id), indent=2))
 
 
 if __name__ == "__main__":

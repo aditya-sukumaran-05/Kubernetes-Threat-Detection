@@ -120,16 +120,21 @@ CLEAN_CAMPAIGN_CUTOFF = "2026-09-20T09:39:50Z"
 
 
 def load_run_capture_metadata(
-    runs_dir: Path, min_start_time_utc: str | None = CLEAN_CAMPAIGN_CUTOFF
+    runs_dir: Path,
+    min_start_time_utc: str | None = CLEAN_CAMPAIGN_CUTOFF,
+    cluster_id: str | None = None,
 ) -> list[CaptureMetadata]:
     """Discover only validated clean experiment runs; historical captures stay separate."""
-    project_root = runs_dir.parents[1]
+    project_root = runs_dir.resolve().parents[1] if len(runs_dir.resolve().parents) >= 2 else Path(".").resolve()
     captures: list[CaptureMetadata] = []
     cutoff = parse_utc_timestamp(min_start_time_utc) if min_start_time_utc else None
     metadata_paths = sorted({p for p in runs_dir.glob("**/metadata.json") if p.is_file()}) if runs_dir.exists() else []
     for metadata_path in metadata_paths:
         raw = json.loads(metadata_path.read_text(encoding="utf-8"))
         if raw.get("status") != "validated" or not raw.get("validation", {}).get("valid"):
+            continue
+        run_cluster = str(raw.get("cluster_id") or "minikube")
+        if cluster_id is not None and run_cluster != cluster_id:
             continue
         start_time_str = raw.get("experiment_start_time_utc")
         if not start_time_str:
@@ -142,10 +147,14 @@ def load_run_capture_metadata(
             capture_path = metadata_path.parent / filename
             if not capture_path.exists():
                 raise SchemaError(f"validated run references missing {source} capture: {capture_path}")
+            try:
+                rel_path = str(capture_path.resolve().relative_to(project_root))
+            except ValueError:
+                rel_path = str(capture_path)
             captures.append(CaptureMetadata(
                 capture_id=f"{raw['experiment_id']}_{source}", source=source,
-                path=str(capture_path.relative_to(project_root)), session_id=raw["experiment_id"],
+                path=rel_path, session_id=raw["experiment_id"],
                 description=raw.get("notes", ""), label_intervals=_run_intervals(raw, source),
-                scenario=raw["scenario"], cluster_id=raw.get("cluster_id", "minikube"),
+                scenario=raw["scenario"], cluster_id=run_cluster,
             ))
     return captures

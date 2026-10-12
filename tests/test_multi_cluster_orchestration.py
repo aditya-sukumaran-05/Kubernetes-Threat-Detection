@@ -327,3 +327,145 @@ def test_cluster_provenance_propagates_to_ml_datasets_and_feature_isolation(tmp_
     assert "cluster_id" not in summaries["network"].features
     for f in summaries["network"].features:
         assert f.startswith("network_")
+
+
+def test_preprocessing_non_destructive_directory_protection(tmp_path: Path) -> None:
+    from experiments.run_preprocessing import PreprocessingError, run as run_preprocessing
+
+    # Setup dummy legacy captures.json and synthetic capture file
+    cap_dir = tmp_path / "telemetry" / "data"
+    cap_dir.mkdir(parents=True)
+    net_file = cap_dir / "net.jsonl"
+    net_file.write_text('{"timestamp":"2026-09-20T10:00:01Z","type":"accept","src":{"addr":"10.0.0.1","port":80},"dst":{"addr":"10.0.0.2","port":40000}}\n', encoding="utf-8")
+
+    meta_file = tmp_path / "captures.json"
+    meta_content = {
+        "captures": [{
+            "id": "cap1",
+            "source": "network",
+            "path": str(net_file.relative_to(tmp_path)),
+            "session_id": "sess1",
+            "label_intervals": [{"start": "2026-09-20T10:00:00Z", "end": "2026-09-20T10:01:00Z", "label": "normal", "attack_type": "normal"}],
+        }]
+    }
+    meta_file.write_text(json.dumps(meta_content), encoding="utf-8")
+
+    out_dir = tmp_path / "out"
+
+    # First run without overwrite succeeds
+    summary1 = run_preprocessing(meta_file, out_dir, runs_dir=None, overwrite=False)
+    assert "cap1" in summary1["captures"]
+    out_csv = out_dir / "processed" / "cap1.csv"
+    assert out_csv.exists()
+    original_sha256 = summary1["captures"]["cap1"]["sha256"]
+
+    # Second run without overwrite must fail safely with PreprocessingError
+    with pytest.raises(PreprocessingError, match="already contains data"):
+        run_preprocessing(meta_file, out_dir, runs_dir=None, overwrite=False)
+
+    # Verify existing output is byte-for-byte unchanged
+    import hashlib
+    assert hashlib.sha256(out_csv.read_bytes()).hexdigest() == original_sha256
+
+    # Run with explicit overwrite=True succeeds
+    summary2 = run_preprocessing(meta_file, out_dir, runs_dir=None, overwrite=True)
+    assert "cap1" in summary2["captures"]
+
+
+def test_preprocessing_cluster_filtering_and_provenance(tmp_path: Path) -> None:
+    from experiments.run_preprocessing import PreprocessingError, run as run_preprocessing
+
+    runs_dir = tmp_path / "runs"
+    run_a = runs_dir / "cluster_a" / "run-a"
+    run_b = runs_dir / "cluster_b" / "run-b"
+    run_a.mkdir(parents=True)
+    run_b.mkdir(parents=True)
+
+    event_line = '{"timestamp":"2026-09-20T10:00:01Z","type":"accept","src":{"addr":"10.0.0.1","port":80},"dst":{"addr":"10.0.0.2","port":40000}}\n'
+    (run_a / "net.jsonl").write_text(event_line, encoding="utf-8")
+    (run_b / "net.jsonl").write_text(event_line, encoding="utf-8")
+
+    def make_meta(exp_id: str, cluster: str):
+        return {
+            "experiment_id": exp_id,
+            "cluster_id": cluster,
+            "scenario": "network_normal",
+            "status": "validated",
+            "validation": {"valid": True},
+            "experiment_start_time_utc": "2026-09-20T10:00:00Z",
+            "experiment_end_time_utc": "2026-09-20T10:01:00Z",
+            "telemetry": {"network": "net.jsonl"},
+        }
+
+    (run_a / "metadata.json").write_text(json.dumps(make_meta("run-a", "cluster-a")), encoding="utf-8")
+    (run_b / "metadata.json").write_text(json.dumps(make_meta("run-b", "cluster-b")), encoding="utf-8")
+
+    # Preprocessing with cluster_id="cluster-a" only processes cluster-a
+    out_a = tmp_path / "out_a"
+    summary_a = run_preprocessing(None, out_a, runs_dir=runs_dir, cluster_id="cluster-a")
+    assert "run-a_network" in summary_a["captures"]
+    assert "run-b_network" not in summary_a["captures"]
+    assert summary_a["cluster_counts"] == {"cluster-a": 1}
+
+    # Preprocessing with non-existent cluster raises PreprocessingError
+    out_c = tmp_path / "out_c"
+    with pytest.raises(PreprocessingError, match="no captures discovered"):
+        run_preprocessing(None, out_c, runs_dir=runs_dir, cluster_id="non-existent")
+
+
+def test_build_datasets_non_destructive_and_cluster_filtering(tmp_path: Path) -> None:
+    import csv
+    from ml.datasets import DatasetError, build_datasets, read_csv
+
+    proc_dir = tmp_path / "processed"
+    proc_dir.mkdir(parents=True)
+    out_dir = tmp_path / "datasets"
+
+    def write_csv(p: Path, rows: list[dict]):
+        with p.open("w", newline="", encoding="utf-8") as h:
+            writer = csv.DictWriter(h, fieldnames=list(rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(rows)
+
+    row_a = {
+        "window_start": "2026-09-20T10:00:00Z",
+        "window_end": "2026-09-20T10:00:10Z",
+        "cluster_id": "cluster-a",
+        "capture_id": "cap_a",
+        "session_id": "sess_a",
+        "scenario": "network_normal",
+        "telemetry_source": "network",
+        "label": "normal",
+        "attack_type": "normal",
+        "network_event_count": 2,
+    }
+    row_b = {
+        "window_start": "2026-09-20T10:00:00Z",
+        "window_end": "2026-09-20T10:00:10Z",
+        "cluster_id": "cluster-b",
+        "capture_id": "cap_b",
+        "session_id": "sess_b",
+        "scenario": "network_normal",
+        "telemetry_source": "network",
+        "label": "normal",
+        "attack_type": "normal",
+        "network_event_count": 3,
+    }
+    write_csv(proc_dir / "cap_a.csv", [row_a])
+    write_csv(proc_dir / "cap_b.csv", [row_b])
+
+    # First build
+    build_datasets(proc_dir, out_dir, overwrite=True)
+    assert (out_dir / "network_dataset.csv").exists()
+
+    # Attempt build with overwrite=False fails safely
+    with pytest.raises(DatasetError, match="already contains dataset files"):
+        build_datasets(proc_dir, out_dir, overwrite=False)
+
+    # Filtered build by cluster_id
+    out_cluster_b = tmp_path / "datasets_b"
+    summaries_b = build_datasets(proc_dir, out_cluster_b, cluster_id="cluster-b")
+    assert summaries_b["network"].cluster_counts == {"cluster-b": 1}
+    ds_b_rows = read_csv(out_cluster_b / "network_dataset.csv")
+    assert len(ds_b_rows) == 1
+    assert ds_b_rows[0]["cluster_id"] == "cluster-b"

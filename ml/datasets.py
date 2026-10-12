@@ -124,23 +124,48 @@ def _summary(name: str, path: Path, rows: list[dict[str, str]], all_rows: int, f
     )
 
 
-def build_datasets(processed_dir: Path, output_dir: Path) -> dict[str, DatasetSummary]:
+def build_datasets(
+    processed_dir: Path,
+    output_dir: Path,
+    overwrite: bool = True,
+    cluster_id: str | None = None,
+) -> dict[str, DatasetSummary]:
     """Create network/workload datasets and only genuine same-session fusion.
 
     Unknown labels are excluded from supervised datasets, never inferred.  The
     fusion file is deliberately empty unless Phase 1 produced aligned windows.
     """
+    if not overwrite:
+        target_files = [
+            output_dir / "network_dataset.csv",
+            output_dir / "workload_dataset.csv",
+            output_dir / "fusion_dataset.csv",
+            output_dir / "dataset_summary.json",
+        ]
+        if any(f.exists() for f in target_files):
+            raise DatasetError(
+                f"output directory {output_dir} already contains dataset files. Use overwrite=True or a distinct output location."
+            )
+
     all_sources = sorted(processed_dir.glob("*.csv"))
     if not all_sources:
         raise DatasetError(f"no processed feature files found in {processed_dir}")
     all_rows = [row for path in all_sources for row in read_csv(path)]
+    if cluster_id is not None:
+        all_rows = [row for row in all_rows if (row.get("cluster_id") or "minikube") == cluster_id]
+        if not all_rows:
+            raise DatasetError(f"no rows found matching cluster_id='{cluster_id}' in {processed_dir}")
     network_all = [row for row in all_rows if row.get("telemetry_source") == "network"]
     workload_all = [row for row in all_rows if row.get("telemetry_source") == "workload"]
     # Supports the original Phase 1 outputs and compact unit-test fixtures.
     if not network_all:
         network_all = [row for path in all_sources if path.name.startswith("network_") for row in read_csv(path)]
+        if cluster_id is not None:
+            network_all = [row for row in network_all if (row.get("cluster_id") or "minikube") == cluster_id]
     if not workload_all:
         workload_all = [row for path in all_sources if path.name.startswith("workload_") for row in read_csv(path)]
+        if cluster_id is not None:
+            workload_all = [row for row in workload_all if (row.get("cluster_id") or "minikube") == cluster_id]
     network_all = _select_scenarios(network_all, NETWORK_SCENARIOS)
     workload_all = _select_scenarios(workload_all, WORKLOAD_SCENARIOS)
     _validate_unique_windows(network_all, "network dataset")
@@ -156,7 +181,10 @@ def build_datasets(processed_dir: Path, output_dir: Path) -> dict[str, DatasetSu
 
     aligned_dir = processed_dir.parent / "aligned"
     aligned_paths = sorted(aligned_dir.glob("*.csv")) if aligned_dir.exists() else []
-    fusion_all = _select_scenarios([row for path in aligned_paths for row in read_csv(path)], FUSION_SCENARIOS)
+    raw_aligned = [row for path in aligned_paths for row in read_csv(path)]
+    if cluster_id is not None:
+        raw_aligned = [row for row in raw_aligned if (row.get("cluster_id") or "minikube") == cluster_id]
+    fusion_all = _select_scenarios(raw_aligned, FUSION_SCENARIOS)
     fusion = [
         row for row in _select_labeled(fusion_all)
         if row.get("network_available") == "True" and row.get("workload_available") == "True"
