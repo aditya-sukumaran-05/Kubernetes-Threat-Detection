@@ -7,7 +7,19 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from dashboard.app import NAV_ALERTS, NAV_LIVE, NAV_REPLAY, NAV_RESEARCH
+from dashboard.app import (
+    NAV_ALERTS,
+    NAV_EVALUATION,
+    NAV_EXPERIMENTS,
+    NAV_EXPLORER,
+    NAV_LIVE,
+    NAV_OVERVIEW,
+    NAV_REPLAY,
+    NAV_RESEARCH,
+    NAV_RUNTIME,
+    NAV_SETTINGS,
+    NAV_SIMULATION,
+)
 from dashboard.components.summary import format_probability, render_detection_summary
 from dashboard.telemetry_provider import CapturedDatasetProvider, LiveKubernetesProvider
 from ml.inference import InferenceResult
@@ -66,18 +78,90 @@ def test_format_probability_adaptive_precision() -> None:
 
 
 def test_dashboard_app_renders_successfully() -> None:
-    """Test full Streamlit app lifecycle using AppTest landing on default Live Monitoring."""
+    """Test full Streamlit app lifecycle using AppTest landing on default Sentinel Overview."""
     at = AppTest.from_file("dashboard/app.py")
     at.run(timeout=25)
 
     assert not at.exception
-    # Verify title
-    assert len(at.title) >= 1
-    # Verify presence of metrics on default Live Monitoring page
+    # Verify title/brand in sidebar
+    metric_labels = [m.label for m in at.metric]
+    assert "Network Events" in metric_labels
+    assert "Runtime Executions" in metric_labels
+    assert "Workload Samples" in metric_labels
+    assert "Active Detections" in metric_labels
+
+
+def test_dashboard_navigation_live_detection() -> None:
+    """Test navigating to Live Detection view."""
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    at.sidebar.radio[0].set_value(NAV_LIVE)
+    at.run(timeout=25)
+
+    assert not at.exception
     metric_labels = [m.label for m in at.metric]
     assert "Valid Network Events" in metric_labels
     assert "Inference Windows (10s)" in metric_labels
     assert "Active Model" in metric_labels
+
+
+def test_dashboard_navigation_telemetry_explorer() -> None:
+    """Test navigating to Telemetry Explorer view."""
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    at.sidebar.radio[0].set_value(NAV_EXPLORER)
+    at.run(timeout=25)
+
+    assert not at.exception
+    assert len(at.dataframe) >= 1
+    # Verify subheader and controls
+    subheaders = [s.value for s in at.subheader]
+    assert any("Telemetry Time-Series Visualizer" in s for s in subheaders)
+
+
+def test_dashboard_navigation_runtime_events() -> None:
+    """Test navigating to Runtime Events dedicated view."""
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    at.sidebar.radio[0].set_value(NAV_RUNTIME)
+    at.run(timeout=25)
+
+    assert not at.exception
+    metric_labels = [m.label for m in at.metric]
+    assert "Total Executions" in metric_labels
+    assert "Unique Binaries" in metric_labels
+    assert len(at.dataframe) >= 1
+
+
+def test_dashboard_navigation_traffic_simulation() -> None:
+    """Test navigating to Traffic & Attack Simulation Controller view."""
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    at.sidebar.radio[0].set_value(NAV_SIMULATION)
+    at.run(timeout=25)
+
+    assert not at.exception
+    # Verify presence of metric cards and simulation tabs
+    metric_labels = [m.label for m in at.metric]
+    assert "Generator Status" in metric_labels
+    assert "Total Requests" in metric_labels
+    assert "Success Rate" in metric_labels
+
+
+def test_dashboard_navigation_settings() -> None:
+    """Test navigating to Settings view."""
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    at.sidebar.radio[0].set_value(NAV_SETTINGS)
+    at.run(timeout=25)
+
+    assert not at.exception
+    assert any("Settings" in str(h.value) for h in at.markdown)
 
 
 def test_dashboard_navigation_research_diagnostics() -> None:
@@ -94,6 +178,24 @@ def test_dashboard_navigation_research_diagnostics() -> None:
     assert "Total LOSO Folds" in metric_labels
     assert "Total Evaluated Windows" in metric_labels
     # Verify ablation data table is rendered
+    assert len(at.dataframe) >= 1
+
+
+def test_dashboard_navigation_experiment_workspace() -> None:
+    """Test navigating to Experiment Workspace and rendering runs and comparisons."""
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    at.sidebar.radio[0].set_value(NAV_EXPERIMENTS)
+    at.run(timeout=25)
+
+    assert not at.exception
+    # Verify subheaders and metrics in Experiment Workspace
+    subheaders = [s.value for s in at.subheader]
+    assert any("Experiment Run Catalog" in s for s in subheaders)
+    metric_labels = [m.label for m in at.metric]
+    assert "Scenario" in metric_labels
+    assert "Status" in metric_labels
     assert len(at.dataframe) >= 1
 
 
@@ -198,7 +300,9 @@ def test_dashboard_live_monitoring_model_switch() -> None:
     at = AppTest.from_file("dashboard/app.py")
     at.run(timeout=25)
 
-    # Defaults to Live Threat Monitoring
+    at.sidebar.radio[0].set_value(NAV_LIVE)
+    at.run(timeout=25)
+
     at.sidebar.selectbox[1].set_value("xgboost")
     at.run(timeout=25)
 
@@ -288,7 +392,9 @@ def test_dashboard_live_capture_filter_and_window_navigation() -> None:
     at = AppTest.from_file("dashboard/app.py")
     at.run(timeout=25)
 
-    # Defaults to Live Threat Monitoring
+    at.sidebar.radio[0].set_value(NAV_LIVE)
+    at.run(timeout=25)
+
     assert not at.exception
     # Verify table is rendered
     assert len(at.dataframe) >= 1
@@ -353,7 +459,7 @@ render_live_capture(det, "random_forest", capture_path=Path(r"{net_file.as_posix
     assert not at.exception
     # Verify stale warning banner is displayed
     assert any("TELEMETRY INACTIVE / STALE" in w.value for w in at.warning)
-    assert any("Historical / Stale Window" in info.value for info in at.info)
+    assert any("Historical / Stale Window" in el.value for el in [*at.info, *at.error])
 
 
 def test_alert_history_buffer_export_scoping() -> None:
@@ -375,3 +481,344 @@ def test_alert_history_buffer_export_scoping() -> None:
     all_keys = set(at.session_state._state._new_session_state.keys()) | set(at.session_state._state._old_state.keys())
     shared_engine_keys = [k for k in all_keys if str(k).startswith("live_engine_")]
     assert len(shared_engine_keys) >= 1
+
+
+@pytest.mark.parametrize(
+    "modality",
+    [
+        "fusion",
+        "network",
+        "workload",
+        "runtime",
+        "net_rt",
+        "rt_wl",
+        "full_fusion",
+    ],
+)
+def test_dashboard_all_seven_modalities_sidebar_selection(modality: str) -> None:
+    """Verify that all 7 modalities can be selected in the sidebar without exceptions."""
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    modality_select = at.sidebar.selectbox[0]
+    modality_select.set_value(modality)
+    at.run(timeout=25)
+
+    assert not at.exception
+
+
+@pytest.mark.parametrize(
+    "modality",
+    [
+        "fusion",
+        "network",
+        "workload",
+        "runtime",
+        "net_rt",
+        "rt_wl",
+        "full_fusion",
+    ],
+)
+def test_dashboard_live_capture_all_seven_modalities(modality: str) -> None:
+    """Verify that Live Detection view renders cleanly across all 7 modalities."""
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    at.sidebar.radio[0].set_value(NAV_LIVE)
+    modality_select = at.sidebar.selectbox[0]
+    modality_select.set_value(modality)
+    at.run(timeout=25)
+
+    assert not at.exception
+    # Verify metric cards are present
+    assert len(at.metric) >= 4
+
+
+def test_dashboard_telemetry_explorer_pairwise_and_trimodal_tabs() -> None:
+    """Verify that Telemetry Explorer renders pairwise correlation and tri-modal fusion tables."""
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    at.sidebar.radio[0].set_value(NAV_EXPLORER)
+    at.run(timeout=25)
+
+    assert not at.exception
+    # Verify dataframes exist for tabs
+    assert len(at.dataframe) >= 1
+    # Verify pairwise subheader/headers
+    subheaders = [s.value for s in at.subheader]
+    assert any("Telemetry Time-Series Visualizer" in s for s in subheaders)
+
+
+def test_dashboard_runtime_events_time_range_filter() -> None:
+    """Verify that Runtime Events view supports time-range filtering without exceptions."""
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    at.sidebar.radio[0].set_value(NAV_RUNTIME)
+    at.run(timeout=25)
+
+    assert not at.exception
+    time_range_sel = [s for s in at.selectbox if "Time Range:" in s.label]
+    assert len(time_range_sel) == 1
+    time_range_sel[0].set_value("Last 24 Hours")
+    at.run(timeout=25)
+
+    assert not at.exception
+    assert len(at.dataframe) >= 1
+
+
+def test_dashboard_replay_observational_modality_guidance() -> None:
+    """Verify that selecting an observational modality in Replay shows the guidance banner."""
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    at.sidebar.radio[0].set_value(NAV_REPLAY)
+    modality_select = at.sidebar.selectbox[0]
+    modality_select.set_value("runtime")
+    at.run(timeout=25)
+
+    assert not at.exception
+    # Should display info notice regarding observational / correlation mode
+    assert any("Observational / Telemetry Correlation Mode" in i.value for i in at.info)
+
+
+@pytest.mark.parametrize(
+    ("modality", "expected_card_label"),
+    [
+        ("network", "Predicted Class"),
+        ("workload", "Predicted Class"),
+        ("fusion", "Predicted Class"),
+        ("runtime", "Runtime Status"),
+        ("net_rt", "Network ML Class"),
+        ("rt_wl", "Workload ML Class"),
+        ("full_fusion", "Fusion ML Class"),
+    ],
+)
+def test_dashboard_modality_aware_metric_cards(modality: str, expected_card_label: str) -> None:
+    """Verify that Live Detection view renders modality-specific metric cards for each mode."""
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    at.sidebar.radio[0].set_value(NAV_LIVE)
+    modality_select = at.sidebar.selectbox[0]
+    modality_select.set_value(modality)
+    at.run(timeout=25)
+
+    assert not at.exception
+    metric_labels = [m.label for m in at.metric]
+    # Check that either the expected label or Stream Status is rendered
+    assert expected_card_label in metric_labels or "Stream Status" in metric_labels
+
+
+def test_dashboard_live_capture_ml_attack_precedence_over_benign_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify that when an ML model predicts an attack and runtime is benign, an error alert is rendered, not a green stable banner."""
+    from dashboard.live_engine import LiveTelemetryEngine, LiveWindowRecord
+    from ml.inference import InferenceResult
+
+    orig_process = LiveTelemetryEngine.process_live_telemetry
+
+    def mock_process(self, model_name="random_forest"):
+        recs = orig_process(self, model_name=model_name)
+        if recs:
+            latest = recs[-1]
+            latest.network_inferences[model_name] = InferenceResult(
+                model_name=model_name,
+                modality="network",
+                predicted_label="attack",
+                confidence=0.95,
+                attack_probability=0.95,
+                window_start=latest.window_start,
+                window_end=latest.window_end,
+                evidence={},
+            )
+            latest.network_available = True
+            latest.runtime_features = {
+                "runtime_sensitive_command_count": 0,
+                "runtime_interactive_shell_count": 0,
+                "runtime_root_exec_count": 0,
+            }
+            latest.runtime_events = []
+            latest.runtime_available = True
+        return recs
+
+    monkeypatch.setattr(LiveTelemetryEngine, "process_live_telemetry", mock_process)
+
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    at.sidebar.radio[0].set_value(NAV_LIVE)
+    modality_select = at.sidebar.selectbox[0]
+    modality_select.set_value("net_rt")
+    at.run(timeout=25)
+
+    assert not at.exception
+    # Must NOT have a green 'CONTAINER RUNTIME STABLE' or 'TELEMETRY CONFORMS TO BENIGN BASELINE' success banner
+    success_banners = [s.value for s in at.success]
+    assert not any("CONTAINER RUNTIME STABLE" in s for s in success_banners)
+    assert not any("TELEMETRY CONFORMS TO BENIGN BASELINE" in s for s in success_banners)
+    # Must have an error banner reporting the threat
+    error_banners = [e.value for e in at.error]
+    assert any("PREDICTED THREAT DETECTED" in e or "CORRELATED MULTIMODAL" in e for e in error_banners)
+
+
+def test_dashboard_live_capture_runtime_alert_precedence_over_normal_ml(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify that when runtime detects sensitive commands while ML predicts normal, an error banner is rendered."""
+    from dashboard.live_engine import LiveTelemetryEngine, LiveWindowRecord
+    from ml.inference import InferenceResult
+    from telemetry.schemas import RuntimeEvent
+
+    orig_process = LiveTelemetryEngine.process_live_telemetry
+
+    def mock_process(self, model_name="random_forest"):
+        recs = orig_process(self, model_name=model_name)
+        if recs:
+            latest = recs[-1]
+            latest.network_inferences[model_name] = InferenceResult(
+                model_name=model_name,
+                modality="network",
+                predicted_label="normal",
+                confidence=0.99,
+                attack_probability=0.01,
+                window_start=latest.window_start,
+                window_end=latest.window_end,
+                evidence={},
+            )
+            latest.network_available = True
+            latest.runtime_features = {
+                "runtime_sensitive_command_count": 2,
+                "runtime_interactive_shell_count": 1,
+                "runtime_root_exec_count": 1,
+            }
+            raw_ev = {
+                "timestamp": latest.window_start,
+                "comm": "sh",
+                "args": "/bin/sh",
+                "pid": 123,
+                "uid": 0,
+                "pod": "webapp",
+            }
+            latest.runtime_events = [RuntimeEvent.from_raw(raw_ev)]
+            latest.runtime_available = True
+        return recs
+
+    monkeypatch.setattr(LiveTelemetryEngine, "process_live_telemetry", mock_process)
+
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    at.sidebar.radio[0].set_value(NAV_LIVE)
+    modality_select = at.sidebar.selectbox[0]
+    modality_select.set_value("net_rt")
+    at.run(timeout=25)
+
+    assert not at.exception
+    # Must NOT have a green benign banner
+    success_banners = [s.value for s in at.success]
+    assert not any("TELEMETRY CONFORMS TO BENIGN BASELINE" in s for s in success_banners)
+    assert not any("PREDICTED NORMAL WORKLOAD" in s for s in success_banners)
+    # Must have an error banner reporting suspicious runtime activity
+    error_banners = [e.value for e in at.error]
+    assert any("SUSPICIOUS RUNTIME ACTIVITY DETECTED" in e for e in error_banners)
+
+
+def test_dashboard_overview_counts_both_ml_and_runtime_alerts() -> None:
+    """Verify that overview Active Detections counts both ML attacks and runtime rule findings without double counting."""
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    # Inspect the Active Detections metric
+    active_det_metrics = [m for m in at.metric if m.label == "Active Detections"]
+    assert len(active_det_metrics) == 1
+    # Check help text references both ML predictions and runtime rule alerts
+    assert "ML predictions" in active_det_metrics[0].help
+    assert "runtime rule alerts" in active_det_metrics[0].help
+
+
+def test_dashboard_overview_idle_workload_zero_cpu_not_counted_as_attack(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify that an uncorroborated idle zero-CPU workload inference does not inflate overview Active Detections."""
+    from dashboard.live_engine import LiveTelemetryEngine, LiveWindowRecord
+    from ml.inference import InferenceResult
+
+    def mock_process(self, model_name="random_forest"):
+        rec = LiveWindowRecord(
+            window_start="2026-10-15T12:00:00Z",
+            window_end="2026-10-15T12:00:10Z",
+            affected_pods="webapp-79699899c5-wds9h",
+            network_available=False,
+            workload_available=True,
+            runtime_available=False,
+            workload_features={
+                "workload_cpu_millicores_mean": 0.0,
+                "workload_memory_mib_mean": 13.5,
+                "workload_sample_count": 2,
+            },
+        )
+        rec.workload_inferences[model_name] = InferenceResult(
+            model_name=model_name,
+            modality="workload",
+            predicted_label="attack",
+            confidence=0.75,
+            attack_probability=0.75,
+            window_start=rec.window_start,
+            window_end=rec.window_end,
+            evidence={"workload_cpu_millicores_mean": 0.0},
+        )
+        return [rec]
+
+    monkeypatch.setattr(LiveTelemetryEngine, "process_live_telemetry", mock_process)
+
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    assert not at.exception
+    active_det_metrics = [m for m in at.metric if m.label == "Active Detections"]
+    assert len(active_det_metrics) == 1
+    # Active detections MUST be 0 (not 1) because container is idle with zero CPU
+    assert active_det_metrics[0].value == "0"
+
+
+def test_dashboard_overview_active_workload_high_cpu_counted_as_attack(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify that an active CPU-abuse workload inference with non-zero CPU IS counted as an attack on overview."""
+    from dashboard.live_engine import LiveTelemetryEngine, LiveWindowRecord
+    from ml.inference import InferenceResult
+
+    def mock_process(self, model_name="random_forest"):
+        rec = LiveWindowRecord(
+            window_start="2026-10-15T12:00:00Z",
+            window_end="2026-10-15T12:00:10Z",
+            affected_pods="webapp-79699899c5-wds9h",
+            network_available=False,
+            workload_available=True,
+            runtime_available=False,
+            workload_features={
+                "workload_cpu_millicores_mean": 850.0,
+                "workload_memory_mib_mean": 25.0,
+                "workload_sample_count": 2,
+            },
+        )
+        rec.workload_inferences[model_name] = InferenceResult(
+            model_name=model_name,
+            modality="workload",
+            predicted_label="attack",
+            confidence=0.95,
+            attack_probability=0.95,
+            window_start=rec.window_start,
+            window_end=rec.window_end,
+            evidence={"workload_cpu_millicores_mean": 850.0},
+        )
+        return [rec]
+
+    monkeypatch.setattr(LiveTelemetryEngine, "process_live_telemetry", mock_process)
+
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    assert not at.exception
+    active_det_metrics = [m for m in at.metric if m.label == "Active Detections"]
+    assert len(active_det_metrics) == 1
+    # Active detections MUST be 1 because container exhibited actual CPU abuse
+    assert active_det_metrics[0].value == "1"
+
+
+

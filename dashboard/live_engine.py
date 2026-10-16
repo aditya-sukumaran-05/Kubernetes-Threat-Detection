@@ -168,6 +168,7 @@ class LiveTelemetryEngine:
         max_retained_windows: int = MAX_RETAINED_WINDOWS,
         stale_threshold_seconds: float = STALE_THRESHOLD_SECONDS,
         clock_skew_tolerance_seconds: float = CLOCK_SKEW_TOLERANCE_SECONDS,
+        prefer_collector_timestamp: bool = True,
     ) -> None:
         self.detector = detector or ThreatDetector()
         self.network_path = Path(network_path)
@@ -181,6 +182,7 @@ class LiveTelemetryEngine:
         self.max_retained_windows = max_retained_windows
         self.stale_threshold_seconds = float(stale_threshold_seconds)
         self.clock_skew_tolerance_seconds = float(clock_skew_tolerance_seconds)
+        self.prefer_collector_timestamp = prefer_collector_timestamp
 
         # Incremental file tracking
         self._network_file_offset: int = 0
@@ -334,7 +336,7 @@ class LiveTelemetryEngine:
                 continue
             try:
                 raw_json = json.loads(line_str)
-                event = NetworkEvent.from_raw(raw_json)
+                event = NetworkEvent.from_raw(raw_json, prefer_collector_timestamp=self.prefer_collector_timestamp)
                 new_events.append(event)
                 self._network_valid_events.append(event)
             except (json.JSONDecodeError, SchemaError) as exc:
@@ -529,7 +531,7 @@ class LiveTelemetryEngine:
                 continue
             try:
                 obj = json.loads(clean)
-                event = RuntimeEvent.from_raw(obj)
+                event = RuntimeEvent.from_raw(obj, prefer_collector_timestamp=self.prefer_collector_timestamp)
                 new_events.append(event)
                 self._runtime_valid_events.append(event)
             except (json.JSONDecodeError, SchemaError):

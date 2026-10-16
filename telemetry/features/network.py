@@ -22,8 +22,23 @@ def extract_network_features(events: list[NetworkEvent], window_seconds: int = W
         source_ports = {event.source.port for event in window_events if event.source.port is not None}
         destination_ips = {event.destination.address for event in window_events if event.destination.address}
         destination_ports = {event.destination.port for event in window_events if event.destination.port is not None}
-        accept_count = sum(event.event_type == "accept" for event in window_events)
-        timestamps = [event.timestamp for event in window_events]
+        accept_count: int = sum(event.event_type == "accept" for event in window_events)
+        close_count: int = sum(event.event_type == "close" for event in window_events)
+        error_count: int = sum(bool(event.error) for event in window_events)
+        eff_window_seconds = max(1, window_seconds)
+        connection_rate: float = accept_count / eff_window_seconds
+
+        # Inter-arrival calculation uses raw_timestamp for true microsecond kernel intervals
+        # (falling back to windowing timestamp if raw_timestamp is absent).
+        # Events within the window are explicitly ordered by this timestamp before computing deltas.
+        inter_arrival_events = sorted(
+            window_events,
+            key=lambda e: e.raw_timestamp if e.raw_timestamp is not None else e.timestamp,
+        )
+        timestamps = [
+            e.raw_timestamp if e.raw_timestamp is not None else e.timestamp
+            for e in inter_arrival_events
+        ]
         inter_arrivals = [
             (later - earlier).total_seconds() for earlier, later in zip(timestamps, timestamps[1:])
         ]
@@ -39,9 +54,9 @@ def extract_network_features(events: list[NetworkEvent], window_seconds: int = W
             "network_unique_destination_ips": len(destination_ips),
             "network_unique_destination_ports": len(destination_ports),
             "network_accept_count": accept_count,
-            "network_close_count": sum(event.event_type == "close" for event in window_events),
-            "network_error_count": sum(bool(event.error) for event in window_events),
-            "network_connection_rate": accept_count / window_seconds,
+            "network_close_count": close_count,
+            "network_error_count": error_count,
+            "network_connection_rate": connection_rate,
             "network_interarrival_mean_seconds": mean(inter_arrivals) if inter_arrivals else 0.0,
             "network_interarrival_std_seconds": pstdev(inter_arrivals) if len(inter_arrivals) > 1 else 0.0,
             "network_interarrival_min_seconds": min(inter_arrivals) if inter_arrivals else 0.0,

@@ -1,0 +1,49 @@
+cluster:
+  cluster_id: minikube
+  expected_context: minikube
+  namespace: default
+  target_workload: deployment/webapp
+  traffic_generator: traffic-simulator
+
+prefer_collector_timestamp: true
+
+output_directory: experiments/harness_runs
+
+limits:
+  max_duration_seconds: 30.0
+  max_requests: 200
+  max_workload_duration_seconds: 20.0
+  max_runtime_commands: 20
+
+telemetry_sources:
+  network: telemetry/data/network/network_events.jsonl
+  workload: telemetry/data/workload_metrics.csv
+  runtime: telemetry/data/runtime/runtime_events.jsonl
+
+scenarios:
+  baseline:
+    description: "Low-rate HTTP requests to webapp"
+    requests: 10
+    delay_seconds: 1.0
+    timeout_seconds: 25.0
+
+  network_burst:
+    description: "Controlled high-rate HTTP burst to webapp"
+    duration_seconds: 10.0
+    max_requests: 60
+    timeout_seconds: 25.0
+
+  runtime_activity:
+    description: "Harmless in-container introspection commands"
+    commands:
+      - "id"
+      - "uname -a"
+      - "date -u"
+      - "ls /usr/share/nginx/html"
+    delay_seconds: 0.5
+    timeout_seconds: 20.0
+
+  workload_variation:
+    description: "Modest bounded in-container CPU activity"
+    duration_seconds: 10.0
+    timeout_seconds: 25.0

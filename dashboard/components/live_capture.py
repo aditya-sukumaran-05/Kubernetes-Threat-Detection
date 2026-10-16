@@ -199,32 +199,93 @@ def render_live_capture(
     # Latest record & target inference for primary banner
     latest_record = records[-1]
 
+    # Modality categorization
+    is_ml_modality = selected_modality in ("network", "workload", "fusion", "net_wl")
+
     # Determine latest verdict based on selected modality
     latest_inf: InferenceResult | None = None
     if selected_modality == "network":
         latest_inf = latest_record.network_inferences.get(selected_model)
     elif selected_modality == "workload":
         latest_inf = latest_record.workload_inferences.get(selected_model)
-    elif selected_modality == "fusion":
+    elif selected_modality in ("fusion", "net_wl"):
         latest_inf = latest_record.fusion_inferences.get(selected_model)
-    else:  # default fallback
-        latest_inf = latest_record.fusion_inferences.get(selected_model) or latest_record.network_inferences.get(selected_model)
+    elif selected_modality == "net_rt":
+        latest_inf = latest_record.network_inferences.get(selected_model)
+    elif selected_modality == "rt_wl":
+        latest_inf = latest_record.workload_inferences.get(selected_model)
+    elif selected_modality == "full_fusion":
+        latest_inf = latest_record.fusion_inferences.get(selected_model)
 
     # Count evaluations strictly for the selected modality
     evaluated_records = []
     attack_count = 0
     for r in records:
-        inf = None
+        has_eval = False
+        is_attack = False
+
         if selected_modality == "network" and r.network_available:
             inf = r.network_inferences.get(selected_model)
+            if inf is not None:
+                has_eval = True
+                is_attack = (inf.predicted_label == "attack")
         elif selected_modality == "workload" and r.workload_available:
             inf = r.workload_inferences.get(selected_model)
-        elif selected_modality == "fusion" and r.is_fused:
+            if inf is not None:
+                has_eval = True
+                is_attack = (inf.predicted_label == "attack")
+        elif selected_modality in ("fusion", "net_wl") and r.is_fused:
             inf = r.fusion_inferences.get(selected_model)
+            if inf is not None:
+                has_eval = True
+                is_attack = (inf.predicted_label == "attack")
+        elif selected_modality == "runtime":
+            has_eval = r.runtime_available
+            if has_eval and r.runtime_features:
+                is_attack = (
+                    r.runtime_features.get("runtime_sensitive_command_count", 0) > 0
+                    or r.runtime_features.get("runtime_interactive_shell_count", 0) > 0
+                )
+        elif selected_modality == "net_rt":
+            has_eval = (r.network_available or r.runtime_available)
+            net_att = False
+            if r.network_available and r.network_inferences.get(selected_model):
+                net_att = (r.network_inferences[selected_model].predicted_label == "attack")
+            rt_sec = False
+            if r.runtime_available and r.runtime_features:
+                rt_sec = (
+                    r.runtime_features.get("runtime_sensitive_command_count", 0) > 0
+                    or r.runtime_features.get("runtime_interactive_shell_count", 0) > 0
+                )
+            is_attack = net_att or rt_sec
+        elif selected_modality == "rt_wl":
+            has_eval = (r.workload_available or r.runtime_available)
+            wl_att = False
+            if r.workload_available and r.workload_inferences.get(selected_model):
+                wl_att = (r.workload_inferences[selected_model].predicted_label == "attack")
+            rt_sec = False
+            if r.runtime_available and r.runtime_features:
+                rt_sec = (
+                    r.runtime_features.get("runtime_sensitive_command_count", 0) > 0
+                    or r.runtime_features.get("runtime_interactive_shell_count", 0) > 0
+                )
+            is_attack = wl_att or rt_sec
+        elif selected_modality == "full_fusion":
+            has_eval = (r.is_fused or r.runtime_available)
+            fus_att = False
+            if r.is_fused and r.fusion_inferences.get(selected_model):
+                fus_att = (r.fusion_inferences[selected_model].predicted_label == "attack")
+            rt_sec = False
+            if r.runtime_available and r.runtime_features:
+                rt_sec = (
+                    r.runtime_features.get("runtime_sensitive_command_count", 0) > 0
+                    or r.runtime_features.get("runtime_interactive_shell_count", 0) > 0
+                )
+            is_attack = fus_att or rt_sec
 
-        if inf is not None:
+        if has_eval:
             evaluated_records.append(r)
-            if inf.predicted_label == "attack":
+            if is_attack:
                 attack_count += 1
 
     normal_count = len(evaluated_records) - attack_count
@@ -233,28 +294,111 @@ def render_live_capture(
     # High-level Metrics Row
     m1, m2, m3, m4 = st.columns(4)
     with m1:
-        st.metric("Valid Network Events", engine.get_network_health().total_valid_records)
+        if selected_modality == "runtime":
+            st.metric("Valid Runtime Execs", engine.get_runtime_health().total_valid_records)
+        elif selected_modality in ("net_rt", "full_fusion"):
+            st.metric("Ingested eBPF Events", f"{engine.get_network_health().total_valid_records + engine.get_runtime_health().total_valid_records:,}")
+        else:
+            st.metric("Valid Network Events", engine.get_network_health().total_valid_records)
     with m2:
         st.metric("Inference Windows (10s)", total_windows)
     with m3:
         help_msg = f"{len(evaluated_records)} evaluated windows ({unevaluated_count} idle/missing for {selected_modality})"
-        st.metric("Threat Breakdown", f"{attack_count} Attack / {normal_count} Normal", help=help_msg)
+        status_label = "Threat Breakdown" if is_ml_modality else "Flagged Activity"
+        st.metric(status_label, f"{attack_count} Alert / {normal_count} Normal", help=help_msg)
     with m4:
-        st.metric("Active Model", selected_model.replace("_", " ").title())
+        if is_ml_modality:
+            st.metric("Active Model", selected_model.replace("_", " ").title())
+        else:
+            st.metric("Analysis Engine", "Observational Correlation", help="Rule-based process execution & multi-telemetry correlation")
 
-    # Latest Window Prediction Metrics Row (ensures primary prediction metrics are always visible)
-    if latest_inf is not None:
-        p1, p2, p3, p4 = st.columns(4)
+    # Latest Window Prediction & Telemetry Metrics Row (Modality-Aware)
+    # Extract telemetry & inference features for the latest observation window
+    rt_sec_count = latest_record.runtime_features.get("runtime_sensitive_command_count", 0) if latest_record.runtime_features else 0
+    rt_shell_count = latest_record.runtime_features.get("runtime_interactive_shell_count", 0) if latest_record.runtime_features else 0
+    rt_root_count = latest_record.runtime_features.get("runtime_root_exec_count", 0) if latest_record.runtime_features else 0
+    rt_total = len(latest_record.runtime_events) if latest_record.runtime_events else 0
+    rt_comms = sorted(set(e.comm for e in latest_record.runtime_events)) if latest_record.runtime_events else []
+
+    net_conn_rate = latest_record.network_features.get("network_connection_rate", 0.0) if latest_record.network_features else 0.0
+    net_conn_cnt = latest_record.network_features.get("network_connection_count", 0) if latest_record.network_features else 0
+    wl_cpu_mean = latest_record.workload_features.get("workload_cpu_millicores_mean", 0.0) if latest_record.workload_features else 0.0
+    wl_mem_mean = latest_record.workload_features.get("workload_memory_mib_mean", 0.0) if latest_record.workload_features else 0.0
+
+    # Determine runtime security status string
+    if (rt_sec_count > 0 or rt_shell_count > 0):
+        rt_status_str = f"ALERT ({rt_sec_count} sens)"
+    elif rt_total > 0:
+        rt_status_str = f"BENIGN ({rt_total} exec)"
+    elif latest_record.runtime_available:
+        rt_status_str = "STABLE (0 exec)"
+    else:
+        rt_status_str = "UNAVAILABLE"
+
+    # Multi-modality aware 4-column metric cards row
+    p1, p2, p3, p4 = st.columns(4)
+    if selected_modality in ("network", "workload", "fusion", "net_wl"):
+        if latest_inf is not None:
+            with p1:
+                st.metric("Predicted Class", latest_inf.predicted_label.upper())
+            with p2:
+                st.metric("Attack Probability", format_probability(latest_inf.attack_probability), help="P(y = attack) for latest live window")
+            with p3:
+                st.metric("Model Confidence", format_probability(latest_inf.confidence), help="P(y = ŷ) for latest live window")
+            with p4:
+                st.metric("Latest Window UTC", latest_record.window_start[-9:-1] if latest_record.window_start else "N/A")
+        else:
+            with p1:
+                st.metric("Stream Status", "TELEMETRY INCOMPLETE")
+            with p2:
+                st.metric("Network Available", "YES" if latest_record.network_available else "NO")
+            with p3:
+                st.metric("Workload Available", "YES" if latest_record.workload_available else "NO")
+            with p4:
+                st.metric("Latest Window UTC", latest_record.window_start[-9:-1] if latest_record.window_start else "N/A")
+    elif selected_modality == "runtime":
         with p1:
-            st.metric("Predicted Class", latest_inf.predicted_label.upper())
+            st.metric("Runtime Status", rt_status_str)
         with p2:
-            st.metric("Attack Probability", format_probability(latest_inf.attack_probability), help="P(y = attack) for latest live window")
+            st.metric("Sensitive Binaries", rt_sec_count, help="Interactive shells (sh, bash) or recon utilities (curl, whoami, id)")
         with p3:
-            st.metric("Model Confidence", format_probability(latest_inf.confidence), help="P(y = ŷ) for latest live window")
+            st.metric("Root Execs (UID 0)", rt_root_count)
         with p4:
             st.metric("Latest Window UTC", latest_record.window_start[-9:-1] if latest_record.window_start else "N/A")
+    elif selected_modality == "net_rt":
+        with p1:
+            net_cls = latest_inf.predicted_label.upper() if latest_inf is not None else ("IDLE" if not latest_record.network_available else "PENDING")
+            st.metric("Network ML Class", net_cls, help="Supervised ML prediction on TCP network telemetry")
+        with p2:
+            st.metric("Net Conn Rate", f"{net_conn_rate:.2f}/s", help=f"TCP connections: {net_conn_cnt} in 10s window")
+        with p3:
+            st.metric("Runtime Security", rt_status_str, help="eBPF container process execution status")
+        with p4:
+            st.metric("Latest Window UTC", latest_record.window_start[-9:-1] if latest_record.window_start else "N/A")
+    elif selected_modality == "rt_wl":
+        with p1:
+            wl_cls = latest_inf.predicted_label.upper() if latest_inf is not None else ("IDLE" if not latest_record.workload_available else "PENDING")
+            st.metric("Workload ML Class", wl_cls, help="Supervised ML prediction on container resource telemetry")
+        with p2:
+            st.metric("CPU Mean", f"{wl_cpu_mean:.1f}m", help=f"Mean CPU millicores; Mem: {wl_mem_mean:.1f} MiB")
+        with p3:
+            st.metric("Runtime Security", rt_status_str, help="eBPF container process execution status")
+        with p4:
+            st.metric("Latest Window UTC", latest_record.window_start[-9:-1] if latest_record.window_start else "N/A")
+    elif selected_modality == "full_fusion":
+        with p1:
+            fus_cls = latest_inf.predicted_label.upper() if latest_inf is not None else ("INCOMPLETE" if not latest_record.is_fused else "PENDING")
+            st.metric("Fusion ML Class", fus_cls, help="Supervised ML prediction on synchronized Net+Workload features")
+        with p2:
+            rate_cpu_str = f"{net_conn_rate:.1f}/s | {wl_cpu_mean:.0f}m" if (latest_record.network_available or latest_record.workload_available) else "N/A"
+            st.metric("Net Rate / CPU", rate_cpu_str, help="Net conn rate (/s) and CPU millicores (m)")
+        with p3:
+            st.metric("Runtime Security", rt_status_str, help="eBPF container process execution status")
+        with p4:
+            coverage_cnt = sum([latest_record.network_available, latest_record.workload_available, latest_record.runtime_available])
+            st.metric("Coverage (x/3)", f"{coverage_cnt}/3 streams", help="Network, Workload, and Runtime streams active in window")
 
-    # 7. Prominent Latest Verdict Banner with Prediction vs Malicious Activity distinction
+    # 7. Prominent Latest Verdict Banner with Strict Precedence Rules
     # Calculate age of latest observation window relative to wall-clock UTC
     is_latest_stale = False
     window_age_seconds: float = 0.0
@@ -278,26 +422,113 @@ def render_live_capture(
     else:
         st.markdown("#### 🚨 Latest Live Observation Window Verdict (Live)")
 
-    if latest_inf is not None:
-        att_prob_str = format_probability(latest_inf.attack_probability)
-        conf_str = format_probability(latest_inf.confidence)
-        stale_tag = " (Historical / Stale Window)" if is_latest_stale else ""
-        if latest_inf.predicted_label == "attack":
-            st.error(
-                f"🚨 **PREDICTED THREAT DETECTED{stale_tag}** in Window `{latest_record.window_start}` "
-                f"({latest_inf.modality.title()} — {latest_inf.model_name.replace('_', ' ').title()})\n\n"
-                f"• **Predicted Label:** ATTACK\n"
-                f"• **Attack Probability:** {att_prob_str}\n"
-                f"• **Model Confidence:** {conf_str}\n"
-                f"• **Affected Pod(s):** `{latest_record.affected_pods}`",
-                icon="🚨",
-            )
-            st.caption(
-                "ℹ️ **Operator Advisory:** *This verdict is an automated statistical machine-learning prediction "
-                "based on telemetry patterns matching trained attack behaviors. It is NOT confirmed malicious activity. "
-                "Security operators must verify cluster logs before initiating containment procedures.*"
-            )
-        else:
+    stale_tag = " (Historical / Stale Window)" if is_latest_stale else ""
+
+    # Precedence Rules Evaluation
+    # Category 1: ML Attack flag
+    has_ml_attack = (latest_inf is not None and latest_inf.predicted_label == "attack")
+
+    # Category 2: Runtime Security Rule Finding flag
+    has_rt_alert = (rt_sec_count > 0 or rt_shell_count > 0)
+
+    # Category 3: Telemetry Availability for selected modality
+    is_telemetry_missing = False
+    missing_desc = ""
+    if selected_modality == "network" and not latest_record.network_available:
+        is_telemetry_missing = True
+        missing_desc = "No TCP socket events recorded (Network stream idle)"
+    elif selected_modality == "workload" and not latest_record.workload_available:
+        is_telemetry_missing = True
+        missing_desc = "No Metrics Server resource samples recorded"
+    elif selected_modality in ("fusion", "net_wl") and not latest_record.is_fused:
+        is_telemetry_missing = True
+        missing_desc = "Multimodal fusion requires both Network and Workload streams"
+    elif selected_modality == "runtime" and not latest_record.runtime_available:
+        is_telemetry_missing = True
+        missing_desc = "No runtime eBPF trace_exec events available"
+    elif selected_modality == "net_rt" and not (latest_record.network_available or latest_record.runtime_available):
+        is_telemetry_missing = True
+        missing_desc = "Neither Network nor Runtime telemetry available"
+    elif selected_modality == "rt_wl" and not (latest_record.workload_available or latest_record.runtime_available):
+        is_telemetry_missing = True
+        missing_desc = "Neither Workload nor Runtime telemetry available"
+    elif selected_modality == "full_fusion" and not (latest_record.is_fused or latest_record.runtime_available):
+        is_telemetry_missing = True
+        missing_desc = "Synchronized fusion features and runtime telemetry unavailable"
+
+    # Precedence Rule 1: Correlated Multimodal Incident (ML Attack + Runtime Finding)
+    if has_ml_attack and has_rt_alert:
+        att_prob_str = format_probability(latest_inf.attack_probability) if latest_inf else "N/A"
+        st.error(
+            f"🚨 **CORRELATED MULTIMODAL INCIDENT{stale_tag}** in Window `{latest_record.window_start}`\n\n"
+            f"• **ML Prediction:** ATTACK ({latest_inf.modality.title()} — {latest_inf.model_name.replace('_', ' ').title()})\n"
+            f"• **ML Probability / Confidence:** {att_prob_str} / {format_probability(latest_inf.confidence) if latest_inf else 'N/A'}\n"
+            f"• **Runtime Security Alert:** {rt_sec_count} sensitive invocation(s) ({', '.join(rt_comms)})\n"
+            f"• **Affected Pod(s):** `{latest_record.affected_pods}`",
+            icon="🚨",
+        )
+        st.caption(
+            "🚨 **High-Severity Security Incident:** *Concurrent ML anomaly detection and container runtime rule violation. "
+            "Correlated indicators suggest active exploitation or container compromise.*"
+        )
+
+    # Precedence Rule 2: ML Anomaly / Threat Detected (Runtime Benign or Idle)
+    elif has_ml_attack:
+        att_prob_str = format_probability(latest_inf.attack_probability) if latest_inf else "N/A"
+        rt_note = f"Runtime process execution is currently benign/idle ({rt_total} execs)." if latest_record.runtime_available else "Runtime telemetry unavailable."
+        st.error(
+            f"🚨 **PREDICTED THREAT DETECTED{stale_tag}** in Window `{latest_record.window_start}` "
+            f"({latest_inf.modality.title()} — {latest_inf.model_name.replace('_', ' ').title()})\n\n"
+            f"• **Predicted Label:** ATTACK\n"
+            f"• **Attack Probability:** {att_prob_str}\n"
+            f"• **Model Confidence:** {format_probability(latest_inf.confidence) if latest_inf else 'N/A'}\n"
+            f"• **Runtime State:** {rt_note}\n"
+            f"• **Affected Pod(s):** `{latest_record.affected_pods}`",
+            icon="🚨",
+        )
+        st.caption(
+            "ℹ️ **Operator Advisory:** *Automated statistical machine-learning prediction "
+            "based on telemetry patterns matching trained attack behaviors. Security operators must verify cluster logs.*"
+        )
+
+    # Precedence Rule 3: Suspicious Runtime Activity Detected (ML Benign or Not Evaluated)
+    elif has_rt_alert:
+        mod_title = {
+            "runtime": "Runtime Process Execution",
+            "net_rt": "Network + Runtime Correlation",
+            "rt_wl": "Runtime + Workload Correlation",
+            "full_fusion": "Full Tri-Modal Fusion",
+        }.get(selected_modality, selected_modality)
+        ml_note = f"ML model ({selected_model}) predicts NORMAL." if (latest_inf and latest_inf.predicted_label == "normal") else "ML model not evaluated on this window."
+        st.error(
+            f"🚨 **SUSPICIOUS RUNTIME ACTIVITY DETECTED{stale_tag}** in Window `{latest_record.window_start}` ({mod_title})\n\n"
+            f"• **Sensitive Invocations:** {rt_sec_count} process execution(s) matching recon/shell patterns ({', '.join(rt_comms)})\n"
+            f"• **Total Executions:** {rt_total}\n"
+            f"• **ML Model Status:** {ml_note}\n"
+            f"• **Affected Pod:** `{latest_record.affected_pods}`",
+            icon="🚨",
+        )
+        st.caption(
+            "⚠️ **Runtime Security Alert:** *Direct process invocation of sensitive shell or reconnaissance utilities inside container. "
+            "Rule-based finding independent of statistical ML predictions.*"
+        )
+
+    # Precedence Rule 4: Telemetry Incomplete / Idle (Never report as benign!)
+    elif is_telemetry_missing:
+        st.warning(
+            f"⚠️ **TELEMETRY INCOMPLETE / AWAITING SYNCHRONIZATION** for Window `{latest_record.window_start}`\n\n"
+            f"• **Modality:** {selected_modality.replace('_', ' ').title()}\n"
+            f"• **Status:** {missing_desc}\n"
+            f"• **Telemetry State:** Cannot compute benign baseline while required telemetry streams are incomplete.",
+            icon="⚠️",
+        )
+        st.caption("ℹ️ *Awaiting active telemetry streams. Historical evaluated windows remain available in the log below.*")
+
+    # Precedence Rule 5: Benign / Normal Activity (All evaluated telemetry conforms to baseline)
+    else:
+        if is_ml_modality and latest_inf is not None:
+            att_prob_str = format_probability(latest_inf.attack_probability)
+            conf_str = format_probability(latest_inf.confidence)
             if is_latest_stale:
                 st.info(
                     f"ℹ️ **PREDICTED NORMAL WORKLOAD{stale_tag}** in Window `{latest_record.window_start}` "
@@ -319,49 +550,45 @@ def render_live_capture(
                     icon="✅",
                 )
             st.caption("ℹ️ *Observed socket activity and workload dynamics match expected benign application baselines.*")
-    else:
-        if selected_modality == "fusion" and not latest_record.is_fused:
-            last_fused_rec = next((r for r in reversed(records) if r.is_fused), None)
-            wl_cpu_str = (
-                f"{latest_record.workload_features.get('workload_cpu_millicores_mean', 0.0):.1f}m CPU"
-                if latest_record.workload_features
-                else "N/A"
-            )
-            st.warning(
-                f"⚠️ **FUSION TELEMETRY INCOMPLETE** for latest window `{latest_record.window_start}`.\n\n"
-                f"The web application was idle (no TCP socket events recorded by Inspektor Gadget), "
-                f"while workload telemetry was actively sampled ({wl_cpu_str}).\n\n"
-                f"Multimodal fusion strictly requires concurrent network and workload telemetry before computing detection. "
-                f"Single-modality detection results remain accessible in the table below.",
-                icon="⚠️",
-            )
-            if last_fused_rec:
-                last_fus_inf = last_fused_rec.fusion_inferences.get(selected_model)
-                if last_fus_inf:
-                    status_badge = "🚨 ATTACK" if last_fus_inf.predicted_label == "attack" else "✅ NORMAL"
-                    prob_str = f"({last_fus_inf.attack_probability * 100:.1f}%)" if last_fus_inf.attack_probability is not None else ""
-                    st.info(
-                        f"📊 **Most Recent Synchronized Fusion Window:** `{last_fused_rec.window_start}` — "
-                        f"Verdict: **{status_badge}** {prob_str}"
-                    )
-        else:
-            if selected_modality == "network" and not latest_record.network_available:
-                last_net_rec = next((r for r in reversed(records) if r.network_available), None)
+        elif selected_modality in ("net_rt", "rt_wl", "full_fusion"):
+            # Multi-modal correlation where ML (if evaluated) is normal and runtime has no sensitive commands
+            ml_text = f"ML ({selected_model}): NORMAL ({format_probability(latest_inf.attack_probability)})" if latest_inf else "ML: Stream Synchronizing"
+            rt_text = f"Runtime: {rt_total} process execs (benign)" if rt_total > 0 else "Runtime: Stable (0 execs)"
+            if is_latest_stale:
                 st.info(
-                    f"ℹ️ **Network Telemetry Idle:** No TCP socket events were recorded in latest window `{latest_record.window_start}`. "
-                    f"Inspektor Gadget is active and listening for webapp traffic."
+                    f"ℹ️ **TELEMETRY CONFORMS TO BENIGN BASELINE{stale_tag}** in Window `{latest_record.window_start}`\n\n"
+                    f"• **{ml_text}**\n"
+                    f"• **{rt_text}**\n"
+                    f"• **Affected Pod:** `{latest_record.affected_pods}`",
+                    icon="ℹ️",
                 )
-                if last_net_rec and last_net_rec.network_inferences.get(selected_model):
-                    last_net_inf = last_net_rec.network_inferences[selected_model]
-                    status_badge = "🚨 ATTACK" if last_net_inf.predicted_label == "attack" else "✅ NORMAL"
-                    st.caption(
-                        f"📊 **Most Recent Evaluated Network Window:** `{last_net_rec.window_start}` — "
-                        f"Verdict: **{status_badge}** ({format_probability(last_net_inf.attack_probability)})"
-                    )
-            elif selected_modality == "workload" and not latest_record.workload_available:
-                st.info(f"ℹ️ **Workload Telemetry Incomplete:** No Metrics Server samples were captured in window `{latest_record.window_start}`.")
             else:
-                st.info(f"ℹ️ Awaiting telemetry evaluation for modality '{selected_modality}' in latest window `{latest_record.window_start}`.")
+                st.success(
+                    f"✅ **TELEMETRY CONFORMS TO BENIGN BASELINE** in Window `{latest_record.window_start}`\n\n"
+                    f"• **{ml_text}**\n"
+                    f"• **{rt_text}**\n"
+                    f"• **Affected Pod:** `{latest_record.affected_pods}`",
+                    icon="✅",
+                )
+            st.caption("ℹ️ *Heterogeneous telemetry streams active and conforming to verified baseline metrics.*")
+        elif selected_modality == "runtime":
+            if rt_total > 0:
+                st.info(
+                    f"ℹ️ **CONTAINER PROCESS ACTIVITY RECORDED** in Window `{latest_record.window_start}`\n\n"
+                    f"• **Observed Commands:** {', '.join(rt_comms)}\n"
+                    f"• **Total Executions:** {rt_total} (Benign standard process execution)\n"
+                    f"• **Affected Pod:** `{latest_record.affected_pods}`",
+                    icon="ℹ️",
+                )
+            else:
+                st.success(
+                    f"✅ **CONTAINER RUNTIME STABLE (0 Process Executions)** in Window `{latest_record.window_start}`\n\n"
+                    f"• **Status:** No process forks or command invocations detected inside container.\n"
+                    f"• **Affected Pod:** `{latest_record.affected_pods}`",
+                    icon="✅",
+                )
+            st.caption("ℹ️ *Runtime process execution monitored via eBPF trace_exec.*")
+
 
     # 8. Recent Detection History Table (Multi-Modality Breakdown)
     st.markdown("---")
@@ -371,15 +598,22 @@ def render_live_capture(
         "across Network-only, Workload-only, and Multimodal Fusion without fabricating missing measurements."
     )
 
-    col_filter1, col_filter2 = st.columns([2, 1])
+    col_filter1, col_filter2, col_filter3 = st.columns([2, 1, 1])
     with col_filter1:
+        search_query = st.text_input(
+            "🔎 Filter Windows by Keyword / Pod / Verdict:",
+            value="",
+            help="Case-insensitive text filter matching any window column value.",
+            key="live_win_search",
+        )
+    with col_filter2:
         filter_active_net = st.checkbox(
             "🔍 Show only windows with active network traffic",
             value=False,
             help="Filter the view to windows that recorded TCP socket events (useful during low-traffic periods).",
         )
-    with col_filter2:
-        st.caption(f"Showing {fused_windows} fused / {net_windows} network / {wl_windows} workload windows")
+    with col_filter3:
+        st.caption(f"Status: {fused_windows} fused / {net_windows} net / {wl_windows} wl")
 
     history_rows: list[dict[str, Any]] = []
     for idx, r in enumerate(records, start=1):
@@ -431,8 +665,23 @@ def render_live_capture(
         })
 
     display_rows = [r for r in history_rows if r["Net Events"] > 0] if filter_active_net else history_rows
+    if search_query.strip():
+        q = search_query.strip().lower()
+        display_rows = [r for r in display_rows if any(q in str(v).lower() for v in r.values())]
+
     hist_df = pd.DataFrame(display_rows)
     st.dataframe(hist_df, width="stretch", hide_index=True)
+
+    # Export displayed windows as CSV
+    if not hist_df.empty:
+        csv_bytes = hist_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="⬇️ Export Filtered Windows (CSV)",
+            data=csv_bytes,
+            file_name="live_observation_windows.csv",
+            mime="text/csv",
+            key="btn_dl_live_windows_csv",
+        )
 
     # 9. Detailed Window Inspection & Evidence (reusing existing components)
     st.markdown("---")
@@ -517,13 +766,47 @@ def render_live_capture(
     selected_idx = target_idx
     target_rec = records[selected_idx]
 
-    # Modality inspection tabs to show network, workload, fusion, and runtime distinctly
-    tab_net, tab_wl, tab_fus, tab_runtime = st.tabs([
-        "🌐 Network Modality",
-        "⚡ Workload Modality",
-        "🔬 Fusion Modality",
-        "🛡️ Runtime Process Modality",
+    # Modality inspection tabs to show all 7 telemetry dimensions distinctly
+    tab_fus, tab_net, tab_wl, tab_runtime, tab_net_rt, tab_rt_wl, tab_full = st.tabs([
+        "🔬 Net + Workload (ML)",
+        "🌐 Network (ML)",
+        "⚡ Workload (ML)",
+        "🛡️ Runtime (eBPF Exec)",
+        "🔗 Net + Runtime",
+        "🔗 Runtime + Workload",
+        "🌐 Full Tri-Modal Fusion",
     ])
+
+    with tab_fus:
+        if target_rec.is_fused and target_rec.network_features and target_rec.workload_features:
+            fus_res = target_rec.fusion_inferences.get(selected_model)
+            if fus_res:
+                render_detection_summary(fus_res, is_live=True)
+                st.markdown("---")
+                render_telemetry_charts(chart_windows, selected_idx, "fusion")
+                st.markdown("---")
+                render_evidence(fus_res)
+            else:
+                st.info("Fusion inference is pending for this window.")
+        else:
+            missing_dims = []
+            if not target_rec.network_available:
+                missing_dims.append("Network (application idle, no eBPF TCP socket events)")
+            if not target_rec.workload_available:
+                missing_dims.append("Workload (Metrics Server samples)")
+            st.info(
+                f"ℹ️ **Multimodal Fusion Unavailable for Window `{target_rec.window_start}`**\n\n"
+                f"Missing telemetry dimension(s): **{', '.join(missing_dims)}**.\n\n"
+                "The research framework requires concurrent measurements from both telemetry dimensions "
+                "to evaluate the 24-feature fusion model without fabricating synthetic values."
+            )
+            if last_fused_idx is not None and last_fused_idx != selected_idx:
+                if st.button(f"🔬 Inspect Recent Completed Fusion Window #{last_fused_idx + 1}", key="fus_empty_jump_btn"):
+                    st.session_state["live_inspected_window_start"] = records[last_fused_idx].window_start
+                    st.session_state["live_track_latest"] = False
+                    if "live_window_slider" in st.session_state:
+                        st.session_state["live_window_slider"] = last_fused_idx + 1
+                    st.rerun()
 
     with tab_net:
         if target_rec.network_available and target_rec.network_features:
@@ -576,37 +859,6 @@ def render_live_capture(
                 f"Kubernetes Metrics Server did not record CPU/memory usage samples within this 10-second interval."
             )
 
-    with tab_fus:
-        if target_rec.is_fused and target_rec.network_features and target_rec.workload_features:
-            fus_res = target_rec.fusion_inferences.get(selected_model)
-            if fus_res:
-                render_detection_summary(fus_res, is_live=True)
-                st.markdown("---")
-                render_telemetry_charts(chart_windows, selected_idx, "fusion")
-                st.markdown("---")
-                render_evidence(fus_res)
-            else:
-                st.info("Fusion inference is pending for this window.")
-        else:
-            missing_dims = []
-            if not target_rec.network_available:
-                missing_dims.append("Network (application idle, no eBPF TCP socket events)")
-            if not target_rec.workload_available:
-                missing_dims.append("Workload (Metrics Server samples)")
-            st.info(
-                f"ℹ️ **Multimodal Fusion Unavailable for Window `{target_rec.window_start}`**\n\n"
-                f"Missing telemetry dimension(s): **{', '.join(missing_dims)}**.\n\n"
-                "The research framework requires concurrent measurements from both telemetry dimensions "
-                "to evaluate the 24-feature fusion model without fabricating synthetic values."
-            )
-            if last_fused_idx is not None and last_fused_idx != selected_idx:
-                if st.button(f"🔬 Inspect Recent Completed Fusion Window #{last_fused_idx + 1}", key="fus_empty_jump_btn"):
-                    st.session_state["live_inspected_window_start"] = records[last_fused_idx].window_start
-                    st.session_state["live_track_latest"] = False
-                    if "live_window_slider" in st.session_state:
-                        st.session_state["live_window_slider"] = last_fused_idx + 1
-                    st.rerun()
-
     with tab_runtime:
         if target_rec.runtime_available and target_rec.runtime_events:
             feats = target_rec.runtime_features or {}
@@ -650,6 +902,91 @@ def render_live_capture(
                     if "live_window_slider" in st.session_state:
                         st.session_state["live_window_slider"] = last_rt_idx + 1
                     st.rerun()
+
+    with tab_net_rt:
+        st.markdown("#### 🔗 Pairwise Correlation: Network + Runtime")
+        st.caption("Correlates eBPF TCP network socket activity with container process executions in this 10-second window.")
+        c_nr1, c_nr2 = st.columns(2)
+        with c_nr1:
+            st.markdown("##### 🌐 Network Stream")
+            if target_rec.network_available and target_rec.network_features:
+                net_res = target_rec.network_inferences.get(selected_model)
+                n_ev = target_rec.network_features.get("network_event_count", 0)
+                n_rate = target_rec.network_features.get("network_connection_rate", 0.0)
+                st.write(f"• **TCP Socket Events:** {n_ev}")
+                st.write(f"• **Connection Rate:** {n_rate:.2f}/sec")
+                if net_res:
+                    st.write(f"• **Network ML Verdict:** `{net_res.predicted_label.upper()}` ({format_probability(net_res.attack_probability)})")
+            else:
+                st.info("No network events recorded in this window.")
+        with c_nr2:
+            st.markdown("##### 🛡️ Runtime Stream")
+            if target_rec.runtime_available and target_rec.runtime_events:
+                r_ev = len(target_rec.runtime_events)
+                r_sec = target_rec.runtime_features.get("runtime_sensitive_command_count", 0) if target_rec.runtime_features else 0
+                st.write(f"• **Process Executions:** {r_ev}")
+                st.write(f"• **Sensitive Invocations:** {r_sec}")
+                if r_sec > 0:
+                    st.error("⚠️ Sensitive binary detected alongside network activity!")
+            else:
+                st.info("No runtime process executions recorded in this window.")
+        render_telemetry_charts(chart_windows, selected_idx, "net_rt")
+
+    with tab_rt_wl:
+        st.markdown("#### 🔗 Pairwise Correlation: Runtime + Workload")
+        st.caption("Correlates container process executions with Metrics Server resource consumption (CPU/Memory) in this 10-second window.")
+        c_rw1, c_rw2 = st.columns(2)
+        with c_rw1:
+            st.markdown("##### 🛡️ Runtime Stream")
+            if target_rec.runtime_available and target_rec.runtime_events:
+                r_ev = len(target_rec.runtime_events)
+                r_root = target_rec.runtime_features.get("runtime_root_exec_count", 0) if target_rec.runtime_features else 0
+                st.write(f"• **Process Executions:** {r_ev}")
+                st.write(f"• **Root Executions:** {r_root}")
+            else:
+                st.info("No runtime process executions recorded in this window.")
+        with c_rw2:
+            st.markdown("##### ⚡ Workload Stream")
+            if target_rec.workload_available and target_rec.workload_features:
+                wl_res = target_rec.workload_inferences.get(selected_model)
+                w_cpu = target_rec.workload_features.get("workload_cpu_millicores_mean", 0.0)
+                w_mem = target_rec.workload_features.get("workload_memory_mib_mean", 0.0)
+                st.write(f"• **CPU Mean:** {w_cpu:.1f}m")
+                st.write(f"• **Memory Mean:** {w_mem:.1f} MiB")
+                if wl_res:
+                    st.write(f"• **Workload ML Verdict:** `{wl_res.predicted_label.upper()}` ({format_probability(wl_res.attack_probability)})")
+            else:
+                st.info("No workload metrics recorded in this window.")
+        render_telemetry_charts(chart_windows, selected_idx, "rt_wl")
+
+    with tab_full:
+        st.markdown("#### 🌐 Full Tri-Modal Telemetry Fusion (Network + Workload + Runtime)")
+        st.caption("Simultaneous time-aligned observation window correlating eBPF TCP sockets, Metrics Server CPU/RAM, and container process executions.")
+        t_col1, t_col2, t_col3 = st.columns(3)
+        with t_col1:
+            n_status = "🟢 Active" if target_rec.network_available else "⚪ Idle"
+            st.metric("Network Telemetry", n_status, help="eBPF TCP trace")
+        with t_col2:
+            w_status = "🟢 Active" if target_rec.workload_available else "⚪ Missing"
+            st.metric("Workload Telemetry", w_status, help="Metrics Server")
+        with t_col3:
+            r_status = "🟢 Active" if target_rec.runtime_available else "⚪ Idle"
+            st.metric("Runtime Telemetry", r_status, help="eBPF trace_exec")
+
+        if target_rec.is_fused and target_rec.fusion_inferences.get(selected_model):
+            fus_res = target_rec.fusion_inferences[selected_model]
+            render_detection_summary(fus_res, is_live=True)
+        render_telemetry_charts(chart_windows, selected_idx, "full_fusion")
+
+    # Raw Feature & Event Inspector Expander
+    with st.expander(f"🔍 Raw Feature Vectors & Telemetry Details for Window #{selected_idx + 1}"):
+        col_raw1, col_raw2 = st.columns(2)
+        with col_raw1:
+            st.markdown("###### Network Features (eBPF)")
+            st.json(target_rec.network_features or {"status": "No network events in this window"})
+        with col_raw2:
+            st.markdown("###### Workload Features (Metrics Server)")
+            st.json(target_rec.workload_features or {"status": "No workload samples in this window"})
 
     # Automatic periodic refresh trigger if configured
     if auto_interval > 0:

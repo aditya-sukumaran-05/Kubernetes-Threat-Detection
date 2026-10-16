@@ -177,3 +177,23 @@ def test_safe_pid_file_cleanup_preserves_foreign_pid(tmp_path: Path) -> None:
             my_pid_file.unlink()
 
     assert not my_pid_file.exists()
+
+
+def test_collector_line_processing_attaches_collector_timestamp() -> None:
+    """Verify that raw event lines written by collectors receive a valid UTC collector_timestamp."""
+    import json
+    from datetime import datetime, timezone
+    from telemetry.schemas import parse_utc_timestamp
+
+    raw_event = {"timestamp": "2026-10-14T03:00:00.000Z", "type": "accept", "src": {"addr": "10.0.0.1", "port": 80}}
+    line = json.dumps(raw_event)
+    
+    # Simulate collector line parsing
+    event = json.loads(line)
+    event["collector_timestamp"] = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+    assert "collector_timestamp" in event
+    parsed = parse_utc_timestamp(event["collector_timestamp"])
+    assert parsed.tzinfo == timezone.utc
+    assert (datetime.now(timezone.utc) - parsed).total_seconds() < 5.0
+

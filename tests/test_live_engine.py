@@ -494,3 +494,94 @@ def test_live_engine_cache_invalidation_on_feature_fingerprint_change(tmp_path: 
     records_3 = engine.process_live_telemetry("random_forest")
     # Because feature fingerprint changed even though event count is still 1, cache was invalidated!
     assert mock_detector.predict.call_count == 2
+
+
+def test_live_engine_prefers_collector_timestamp_when_configured(tmp_path: Path) -> None:
+    net_file = tmp_path / "network_events.jsonl"
+    wl_file = tmp_path / "workload_metrics.csv"
+    
+    # Event with skewed eBPF timestamp (05:00:01) and host reception collector_timestamp (15:00:01)
+    ev = {
+        "timestamp": "2026-10-14T05:00:01.000Z",
+        "collector_timestamp": "2026-10-14T15:00:01.000Z",
+        "type": "accept",
+        "src": {"addr": "10.244.0.5", "port": 54321},
+        "dst": {"addr": "10.244.0.2", "port": 80},
+        "k8s": {"podName": "webapp-live-test", "namespace": "default"},
+    }
+    net_file.write_text(json.dumps(ev) + "\n", encoding="utf-8")
+    wl_file.write_text("timestamp,pod,cpu_millicores,memory_mib\n2026-10-14T15:00:02.000Z,webapp-live-test,0,16\n", encoding="utf-8")
+
+    # 1. Default (prefer_collector_timestamp=True): should use host reception time (15:00:00 window)
+    engine_live = LiveTelemetryEngine(network_path=net_file, workload_path=wl_file, prefer_collector_timestamp=True)
+    events = engine_live.read_new_network_events()
+    assert len(events) == 1
+    assert events[0].timestamp.isoformat() == "2026-10-14T15:00:01+00:00"
+
+    records = engine_live.process_live_telemetry("logistic_regression")
+    assert "2026-10-14T15:00:00.000Z" in engine_live.windows
+    assert "2026-10-14T05:00:00.000Z" not in engine_live.windows
+
+    # 2. Legacy fallback (prefer_collector_timestamp=False): should use raw eBPF timestamp (05:00:00 window)
+    engine_raw = LiveTelemetryEngine(network_path=net_file, workload_path=wl_file, prefer_collector_timestamp=False)
+    events_raw = engine_raw.read_new_network_events()
+    assert len(events_raw) == 1
+    assert events_raw[0].timestamp.isoformat() == "2026-10-14T05:00:01+00:00"
+
+
+def test_live_engine_process_telemetry_accept_count_regression(tmp_path: Path) -> None:
+    """Verify process_live_telemetry handles empty, normal, and close-only telemetry without NameError."""
+    net_file = tmp_path / "network_events.jsonl"
+    wl_file = tmp_path / "workload_metrics.csv"
+    rt_file = tmp_path / "runtime_events.jsonl"
+
+    net_file.touch()
+    wl_file.touch()
+    rt_file.touch()
+
+    from unittest.mock import MagicMock
+    mock_detector = MagicMock()
+    mock_res = MagicMock()
+    mock_res.predicted_label = "normal"
+    mock_detector.predict.return_value = mock_res
+
+    engine = LiveTelemetryEngine(
+        detector=mock_detector,
+        network_path=net_file,
+        workload_path=wl_file,
+        runtime_path=rt_file,
+    )
+
+    # 1. Empty input
+    empty_records = engine.process_live_telemetry("random_forest")
+    assert empty_records == []
+
+    # 2. Normal input with accept and close events
+    ev1 = {
+        "timestamp": "2026-10-15T12:00:01.000Z",
+        "collector_timestamp": "2026-10-15T12:00:01.000Z",
+        "type": "accept",
+        "src": {"addr": "10.244.0.7", "port": 80},
+        "dst": {"addr": "10.244.0.9", "port": 33508},
+        "k8s": {"podName": "webapp", "namespace": "default"},
+    }
+    ev2 = {
+        "timestamp": "2026-10-15T12:00:02.000Z",
+        "collector_timestamp": "2026-10-15T12:00:02.000Z",
+        "type": "close",
+        "src": {"addr": "10.244.0.7", "port": 80},
+        "dst": {"addr": "10.244.0.9", "port": 33508},
+        "k8s": {"podName": "webapp", "namespace": "default"},
+    }
+    net_file.write_text(json.dumps(ev1) + "\n" + json.dumps(ev2) + "\n", encoding="utf-8")
+
+    records = engine.process_live_telemetry("random_forest")
+    assert len(records) == 1
+    rec = records[0]
+    assert rec.network_available is True
+    assert rec.network_features["network_event_count"] == 2
+    assert rec.network_features["network_accept_count"] == 1
+    assert rec.network_features["network_connection_count"] == 1
+    assert rec.network_features["network_close_count"] == 1
+    assert rec.network_features["network_connection_rate"] == 0.1
+

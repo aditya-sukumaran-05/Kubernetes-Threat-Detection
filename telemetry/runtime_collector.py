@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from typing import Sequence
 
 import psutil
@@ -235,6 +236,7 @@ def main() -> None:
 
                     try:
                         event = json.loads(line)
+                        event["collector_timestamp"] = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
                         file.write(json.dumps(event) + "\n")
                         file.flush()
 

@@ -15,15 +15,31 @@ import streamlit as st
 from dashboard.components.alert_history import render_alert_history
 from dashboard.components.charts import render_telemetry_charts
 from dashboard.components.evidence import render_evidence
+from dashboard.components.experiment_workspace import render_experiment_workspace
 from dashboard.components.live_capture import render_live_capture
 from dashboard.components.manual_input import render_manual_input
+from dashboard.components.overview import render_overview
 from dashboard.components.research_diagnostics import render_research_diagnostics
+from dashboard.components.runtime_events_view import render_runtime_events_page
+from dashboard.components.settings_view import render_settings_view
 from dashboard.components.summary import format_probability, render_detection_summary
+from dashboard.components.telemetry_explorer import render_telemetry_explorer
+from dashboard.styles import apply_soc_styles, render_brand_sidebar, render_cluster_status_sidebar
 from dashboard.telemetry_provider import CapturedDatasetProvider
 from ml.inference import InferenceSchemaError, ThreatDetector
 
-NAV_LIVE = "Live Threat Monitoring"
-NAV_RESEARCH = "Research & Diagnostics"
+# Sentinel Navigation Modes matching Reference Design
+NAV_OVERVIEW = "Overview"
+NAV_LIVE = "Live Detection"
+NAV_SIMULATION = "Traffic Simulation & Attacks"
+NAV_EXPLORER = "Telemetry Explorer"
+NAV_RUNTIME = "Runtime Events"
+NAV_EXPERIMENTS = "Experiments"
+NAV_EVALUATION = "Model Evaluation"
+NAV_SETTINGS = "Settings"
+
+# Historical compatibility alias for existing tests
+NAV_RESEARCH = NAV_EVALUATION
 NAV_ALERTS = "Alert History & Telemetry Health"
 NAV_REPLAY = "Historical Replay & Testing"
 
@@ -31,55 +47,82 @@ NAV_REPLAY = "Historical Replay & Testing"
 def build_app() -> None:
     """Build and render the Streamlit threat detection dashboard."""
     st.set_page_config(
-        page_title="Kubernetes Threat Detection System",
+        page_title="K8S SENTINEL — Kubernetes Threat Detection",
         page_icon="🛡️",
         layout="wide",
         initial_sidebar_state="expanded",
     )
 
-    # 1. Header
-    st.title("🛡️ Kubernetes Threat Detection System")
-    st.markdown(
-        "A heterogeneous machine-learning threat detection framework identifying anomalous "
-        "and attack behavior in Kubernetes environments using eBPF network telemetry "
-        "and container workload metrics."
-    )
-    st.markdown("---")
+    # 1. Apply Sentinel Design Styles
+    apply_soc_styles()
 
     # Initialize Backend Services
     detector = ThreatDetector(project_root=PROJECT_ROOT)
     provider = CapturedDatasetProvider()
 
-    # 2. Configuration Sidebar
-    st.sidebar.header("⚙️ Detection Configuration")
+    # 2. Sentinel Sidebar
+    render_brand_sidebar()
 
-    # Primary Navigation (Live Monitoring prioritized as primary product experience)
+    # Primary Navigation
     nav_icons = {
-        NAV_LIVE: "📡 Live Threat Monitoring",
-        NAV_RESEARCH: "🔬 Research & Diagnostics",
-        NAV_ALERTS: "📋 Active Buffer Alert View & Health",
-        NAV_REPLAY: "📼 Historical Replay & Testing",
+        NAV_OVERVIEW: "🏠 Overview",
+        NAV_LIVE: "📡 Live Detection",
+        NAV_SIMULATION: "⚡ Traffic & Attacks",
+        NAV_EXPLORER: "🔍 Telemetry Explorer",
+        NAV_RUNTIME: "🛡️ Runtime Events",
+        NAV_EXPERIMENTS: "🧪 Experiments",
+        NAV_EVALUATION: "📈 Model Evaluation",
+        NAV_SETTINGS: "⚙️ Settings",
+        NAV_ALERTS: "📋 Active Alert View & Health",
+        NAV_REPLAY: "📼 Historical Replay",
     }
+    nav_options = [
+        NAV_OVERVIEW,
+        NAV_LIVE,
+        NAV_SIMULATION,
+        NAV_EXPLORER,
+        NAV_RUNTIME,
+        NAV_EXPERIMENTS,
+        NAV_EVALUATION,
+        NAV_SETTINGS,
+        NAV_ALERTS,
+        NAV_REPLAY,
+    ]
     selected_mode = st.sidebar.radio(
-        "System Navigation",
-        options=[NAV_LIVE, NAV_RESEARCH, NAV_ALERTS, NAV_REPLAY],
+        "Navigation",
+        options=nav_options,
         format_func=lambda m: nav_icons.get(m, m),
         index=0,
-        help="Select dashboard view: Live streaming detection, research diagnostics, alert history, or historical campaign replay.",
+        help="Select dashboard view: Overview, Live Detection, Telemetry Explorer, Runtime Events, Experiments, Model Evaluation, Settings, Alert View, or Replay.",
     )
 
     # Modality Selector
+    st.sidebar.markdown("---")
+    st.sidebar.caption("🎛️ **Inference & Telemetry Modality**")
     modality_labels = {
-        "fusion": "Fusion (Network + Workload)",
-        "network": "Network Only (eBPF TCP Trace)",
-        "workload": "Workload Only (CPU / Memory)",
+        "fusion": "1. Network + Workload [ML Benchmark]",
+        "network": "2. Network Only (eBPF TCP) [ML Model]",
+        "workload": "3. Workload Only (Metrics Server) [ML Model]",
+        "runtime": "4. Runtime Only (trace_exec) [Observational]",
+        "net_rt": "5. Network + Runtime [Observational Fusion]",
+        "rt_wl": "6. Runtime + Workload [Observational Fusion]",
+        "full_fusion": "7. Full Tri-Modal Fusion (Net + RT + WL)",
     }
+    all_modalities = [
+        "fusion",
+        "network",
+        "workload",
+        "runtime",
+        "net_rt",
+        "rt_wl",
+        "full_fusion",
+    ]
     selected_modality = st.sidebar.selectbox(
         "Telemetry Modality",
-        options=["fusion", "network", "workload"],
+        options=all_modalities,
         format_func=lambda m: modality_labels.get(m, m),
         index=0,
-        help="Select the telemetry source dimension to evaluate.",
+        help="Select the telemetry source dimension or fusion combination to evaluate.",
     )
 
     # Model Selector
@@ -93,31 +136,54 @@ def build_app() -> None:
         options=["random_forest", "xgboost", "svm"],
         format_func=lambda m: model_labels.get(m, m),
         index=0,
-        help="Select the trained baseline classifier.",
+        help="Select the trained baseline classifier (applies to ML benchmark modalities).",
     )
 
-    # Sidebar System Status Card
-    st.sidebar.markdown("---")
-    st.sidebar.caption("🖥️ **System Status**")
-    st.sidebar.markdown(
-        "- **Primary Workload:** `webapp (nginx)`\n"
-        "- **Cluster Context:** `minikube`\n"
-        "- **Telemetry Collectors:** `Inspektor Gadget` & `Metrics Server`\n"
-        "- **Window Duration:** `10.0 seconds`\n"
-        "- **Validation:** `Session-Isolated LOSO`"
+    # Sidebar Cluster Status Card (Matching reference design)
+    render_cluster_status_sidebar(
+        cluster_name="minikube",
+        k8s_version="v1.37.0",
+        nodes=1,
+        pods=4,
+        status_text="Ready",
     )
 
     # 3. Main Dashboard Body based on Mode
-    if selected_mode == NAV_LIVE:
-        # Priority A: Live Threat Monitoring
+    if selected_mode == NAV_OVERVIEW:
+        # K8S SENTINEL Landing Page
+        render_overview(detector, selected_model=selected_model)
+
+    elif selected_mode == NAV_LIVE:
+        # Live Threat Monitoring
         render_live_capture(detector, selected_model, selected_modality=selected_modality)
 
-    elif selected_mode == NAV_RESEARCH:
-        # Priority B: Research and Model Diagnostics
+    elif selected_mode == NAV_SIMULATION:
+        # Interactive Traffic & Attack Controller
+        from dashboard.components.traffic_simulation_view import render_traffic_simulation_view
+        render_traffic_simulation_view(project_root=PROJECT_ROOT)
+
+    elif selected_mode == NAV_EXPLORER:
+        # Unified Telemetry Explorer
+        render_telemetry_explorer(detector, selected_model=selected_model)
+
+    elif selected_mode == NAV_RUNTIME:
+        # Dedicated Container Runtime Events
+        render_runtime_events_page(detector)
+
+    elif selected_mode == NAV_EXPERIMENTS:
+        # Experiment Research Workspace
+        render_experiment_workspace(project_root=PROJECT_ROOT)
+
+    elif selected_mode == NAV_EVALUATION:
+        # Research & Model Diagnostics (LOSO ablation tables)
         render_research_diagnostics(project_root=PROJECT_ROOT)
 
+    elif selected_mode == NAV_SETTINGS:
+        # Platform Settings & Environment Configuration
+        render_settings_view(project_root=PROJECT_ROOT)
+
     elif selected_mode == NAV_ALERTS:
-        # Priority C: Alert History and Telemetry Health
+        # Active Buffer Alert View & Telemetry Health
         render_alert_history(detector)
 
     elif selected_mode == NAV_REPLAY:
@@ -132,6 +198,17 @@ def build_app() -> None:
         replay_tab, manual_tab = st.tabs(["📼 Replay Captured Campaigns", "✍️ Submit Custom JSON Window"])
 
         with replay_tab:
+            if selected_modality not in provider.get_modalities():
+                st.info(
+                    f"ℹ️ **Modality '{modality_labels.get(selected_modality, selected_modality)}' is an Observational / Telemetry Correlation Mode.**\n\n"
+                    "Standard offline benchmark datasets with ground-truth experiment labels are currently curated for "
+                    "**Network**, **Workload**, and **Network + Workload Fusion**.\n\n"
+                    "To inspect streaming or historical runtime process executions and tri-modal correlations, navigate to "
+                    "**Live Detection**, **Telemetry Explorer**, or **Runtime Events**.",
+                    icon="ℹ️",
+                )
+                return
+
             try:
                 available_sessions = provider.get_sessions(selected_modality)
             except Exception as exc:

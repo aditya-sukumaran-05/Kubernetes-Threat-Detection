@@ -76,9 +76,15 @@ class NetworkEvent:
     destination: Endpoint
     pod: str | None
     error: str | None
+    raw_timestamp: datetime | None = None
+    collector_timestamp: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if self.raw_timestamp is None:
+            object.__setattr__(self, "raw_timestamp", self.timestamp)
 
     @classmethod
-    def from_raw(cls, value: Any) -> "NetworkEvent":
+    def from_raw(cls, value: Any, prefer_collector_timestamp: bool = False) -> "NetworkEvent":
         if not isinstance(value, dict):
             raise SchemaError("network event must be a JSON object")
         event_type = value.get("type")
@@ -93,13 +99,31 @@ class NetworkEvent:
         error = value.get("error")
         if error is not None and not isinstance(error, str):
             raise SchemaError("network event error must be a string")
+
+        raw_ts_val = value.get("timestamp")
+        collector_ts_val = value.get("collector_timestamp")
+
+        raw_ts = parse_utc_timestamp(raw_ts_val) if raw_ts_val else None
+        collector_ts = parse_utc_timestamp(collector_ts_val) if collector_ts_val else None
+
+        if prefer_collector_timestamp and collector_ts is not None:
+            active_ts = collector_ts
+        elif raw_ts is not None:
+            active_ts = raw_ts
+        elif collector_ts is not None:
+            active_ts = collector_ts
+        else:
+            raise SchemaError("network event missing timestamp")
+
         return cls(
-            timestamp=parse_utc_timestamp(value.get("timestamp")),
+            timestamp=active_ts,
             event_type=event_type,
             source=Endpoint.from_raw(value.get("src"), "src"),
             destination=Endpoint.from_raw(value.get("dst"), "dst"),
             pod=pod,
             error=error,
+            raw_timestamp=raw_ts or active_ts,
+            collector_timestamp=collector_ts,
         )
 
 
@@ -146,16 +170,32 @@ class RuntimeEvent:
     container_name: str | None
     container_id: str | None
     error: str | None
+    raw_timestamp: datetime | None = None
+    collector_timestamp: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if self.raw_timestamp is None:
+            object.__setattr__(self, "raw_timestamp", self.timestamp)
 
     @classmethod
-    def from_raw(cls, value: Any) -> "RuntimeEvent":
+    def from_raw(cls, value: Any, prefer_collector_timestamp: bool = False) -> "RuntimeEvent":
         if not isinstance(value, dict):
             raise SchemaError("runtime event must be a JSON object")
 
-        ts_val = value.get("timestamp")
-        if not ts_val:
+        raw_ts_val = value.get("timestamp")
+        collector_ts_val = value.get("collector_timestamp")
+
+        raw_ts = parse_utc_timestamp(raw_ts_val) if raw_ts_val else None
+        collector_ts = parse_utc_timestamp(collector_ts_val) if collector_ts_val else None
+
+        if prefer_collector_timestamp and collector_ts is not None:
+            active_ts = collector_ts
+        elif raw_ts is not None:
+            active_ts = raw_ts
+        elif collector_ts is not None:
+            active_ts = collector_ts
+        else:
             raise SchemaError("runtime event missing timestamp")
-        timestamp = parse_utc_timestamp(ts_val)
 
         proc = value.get("proc")
         if proc is not None and not isinstance(proc, dict):
@@ -261,7 +301,7 @@ class RuntimeEvent:
             error = str(error)
 
         return cls(
-            timestamp=timestamp,
+            timestamp=active_ts,
             comm=comm,
             args=args,
             exepath=exepath,
@@ -279,10 +319,12 @@ class RuntimeEvent:
             container_name=container_name,
             container_id=container_id,
             error=error,
+            raw_timestamp=raw_ts or active_ts,
+            collector_timestamp=collector_ts,
         )
 
 
-def load_network_events(path: Path | str) -> list[NetworkEvent]:
+def load_network_events(path: Path | str, prefer_collector_timestamp: bool = False) -> list[NetworkEvent]:
     """Load a JSONL capture, failing with a useful line number on bad evidence."""
     path = Path(path)
     records: list[NetworkEvent] = []
@@ -292,13 +334,13 @@ def load_network_events(path: Path | str) -> list[NetworkEvent]:
                 continue
             try:
                 raw = json.loads(line)
-                records.append(NetworkEvent.from_raw(raw))
+                records.append(NetworkEvent.from_raw(raw, prefer_collector_timestamp=prefer_collector_timestamp))
             except (json.JSONDecodeError, SchemaError) as exc:
                 raise SchemaError(f"{path}:{line_number}: {exc}") from exc
     return records
 
 
-def load_runtime_events(path: Path | str) -> list[RuntimeEvent]:
+def load_runtime_events(path: Path | str, prefer_collector_timestamp: bool = False) -> list[RuntimeEvent]:
     """Load a JSONL runtime process capture, failing with a line number on bad evidence."""
     path = Path(path)
     records: list[RuntimeEvent] = []
@@ -308,7 +350,7 @@ def load_runtime_events(path: Path | str) -> list[RuntimeEvent]:
                 continue
             try:
                 raw = json.loads(line)
-                records.append(RuntimeEvent.from_raw(raw))
+                records.append(RuntimeEvent.from_raw(raw, prefer_collector_timestamp=prefer_collector_timestamp))
             except (json.JSONDecodeError, SchemaError) as exc:
                 raise SchemaError(f"{path}:{line_number}: {exc}") from exc
     return records
