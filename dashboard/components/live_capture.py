@@ -199,8 +199,17 @@ def render_live_capture(
     # Latest record & target inference for primary banner
     latest_record = records[-1]
 
-    # Modality categorization
-    is_ml_modality = selected_modality in ("network", "workload", "fusion", "net_wl")
+    # Modality categorization: all 7 modalities have trained ML benchmark models
+    is_ml_modality = selected_modality in (
+        "network",
+        "workload",
+        "fusion",
+        "net_wl",
+        "runtime",
+        "net_rt",
+        "rt_wl",
+        "full_fusion",
+    )
 
     # Determine latest verdict based on selected modality
     latest_inf: InferenceResult | None = None
@@ -210,12 +219,14 @@ def render_live_capture(
         latest_inf = latest_record.workload_inferences.get(selected_model)
     elif selected_modality in ("fusion", "net_wl"):
         latest_inf = latest_record.fusion_inferences.get(selected_model)
+    elif selected_modality == "runtime":
+        latest_inf = latest_record.runtime_inferences.get(selected_model)
     elif selected_modality == "net_rt":
-        latest_inf = latest_record.network_inferences.get(selected_model)
+        latest_inf = latest_record.net_rt_inferences.get(selected_model) or latest_record.network_inferences.get(selected_model)
     elif selected_modality == "rt_wl":
-        latest_inf = latest_record.workload_inferences.get(selected_model)
+        latest_inf = latest_record.rt_wl_inferences.get(selected_model) or latest_record.workload_inferences.get(selected_model)
     elif selected_modality == "full_fusion":
-        latest_inf = latest_record.fusion_inferences.get(selected_model)
+        latest_inf = latest_record.full_fusion_inferences.get(selected_model) or latest_record.fusion_inferences.get(selected_model)
 
     # Count evaluations strictly for the selected modality
     evaluated_records = []
@@ -239,49 +250,44 @@ def render_live_capture(
             if inf is not None:
                 has_eval = True
                 is_attack = (inf.predicted_label == "attack")
-        elif selected_modality == "runtime":
-            has_eval = r.runtime_available
-            if has_eval and r.runtime_features:
-                is_attack = (
-                    r.runtime_features.get("runtime_sensitive_command_count", 0) > 0
-                    or r.runtime_features.get("runtime_interactive_shell_count", 0) > 0
-                )
-        elif selected_modality == "net_rt":
-            has_eval = (r.network_available or r.runtime_available)
-            net_att = False
-            if r.network_available and r.network_inferences.get(selected_model):
-                net_att = (r.network_inferences[selected_model].predicted_label == "attack")
-            rt_sec = False
-            if r.runtime_available and r.runtime_features:
-                rt_sec = (
-                    r.runtime_features.get("runtime_sensitive_command_count", 0) > 0
-                    or r.runtime_features.get("runtime_interactive_shell_count", 0) > 0
-                )
-            is_attack = net_att or rt_sec
-        elif selected_modality == "rt_wl":
-            has_eval = (r.workload_available or r.runtime_available)
-            wl_att = False
-            if r.workload_available and r.workload_inferences.get(selected_model):
-                wl_att = (r.workload_inferences[selected_model].predicted_label == "attack")
-            rt_sec = False
-            if r.runtime_available and r.runtime_features:
-                rt_sec = (
-                    r.runtime_features.get("runtime_sensitive_command_count", 0) > 0
-                    or r.runtime_features.get("runtime_interactive_shell_count", 0) > 0
-                )
-            is_attack = wl_att or rt_sec
-        elif selected_modality == "full_fusion":
-            has_eval = (r.is_fused or r.runtime_available)
-            fus_att = False
-            if r.is_fused and r.fusion_inferences.get(selected_model):
-                fus_att = (r.fusion_inferences[selected_model].predicted_label == "attack")
-            rt_sec = False
-            if r.runtime_available and r.runtime_features:
-                rt_sec = (
-                    r.runtime_features.get("runtime_sensitive_command_count", 0) > 0
-                    or r.runtime_features.get("runtime_interactive_shell_count", 0) > 0
-                )
-            is_attack = fus_att or rt_sec
+        elif selected_modality == "runtime" and r.runtime_available:
+            inf = r.runtime_inferences.get(selected_model)
+            if inf is not None:
+                has_eval = True
+                is_attack = (inf.predicted_label == "attack")
+        elif selected_modality == "net_rt" and (r.network_available or r.runtime_available):
+            inf = r.net_rt_inferences.get(selected_model) or r.network_inferences.get(selected_model)
+            if inf is not None:
+                has_eval = True
+                is_attack = (inf.predicted_label == "attack")
+            elif r.runtime_features and (
+                r.runtime_features.get("runtime_sensitive_command_count", 0) > 0
+                or r.runtime_features.get("runtime_interactive_shell_count", 0) > 0
+            ):
+                has_eval = True
+                is_attack = True
+        elif selected_modality == "rt_wl" and (r.workload_available or r.runtime_available):
+            inf = r.rt_wl_inferences.get(selected_model) or r.workload_inferences.get(selected_model)
+            if inf is not None:
+                has_eval = True
+                is_attack = (inf.predicted_label == "attack")
+            elif r.runtime_features and (
+                r.runtime_features.get("runtime_sensitive_command_count", 0) > 0
+                or r.runtime_features.get("runtime_interactive_shell_count", 0) > 0
+            ):
+                has_eval = True
+                is_attack = True
+        elif selected_modality == "full_fusion" and (r.is_fused or r.runtime_available):
+            inf = r.full_fusion_inferences.get(selected_model) or r.fusion_inferences.get(selected_model)
+            if inf is not None:
+                has_eval = True
+                is_attack = (inf.predicted_label == "attack")
+            elif r.runtime_features and (
+                r.runtime_features.get("runtime_sensitive_command_count", 0) > 0
+                or r.runtime_features.get("runtime_interactive_shell_count", 0) > 0
+            ):
+                has_eval = True
+                is_attack = True
 
         if has_eval:
             evaluated_records.append(r)

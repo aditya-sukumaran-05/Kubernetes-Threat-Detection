@@ -44,8 +44,29 @@ class CapturedDatasetProvider(TelemetryProvider):
             self._cache[modality] = df
         return self._cache[modality]
 
-    def get_modalities(self) -> list[str]:
+    def get_modalities(self, include_all: bool = False) -> list[str]:
+        if include_all:
+            return [
+                "fusion",
+                "network",
+                "workload",
+                "runtime",
+                "net_rt",
+                "rt_wl",
+                "full_fusion",
+            ]
         return ["network", "workload", "fusion"]
+
+    def get_all_modalities(self) -> list[str]:
+        return [
+            "fusion",
+            "network",
+            "workload",
+            "runtime",
+            "net_rt",
+            "rt_wl",
+            "full_fusion",
+        ]
 
     def get_sessions(self, modality: str) -> list[str]:
         df = self._get_dataframe(modality)

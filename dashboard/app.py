@@ -103,10 +103,10 @@ def build_app() -> None:
         "fusion": "1. Network + Workload [ML Benchmark]",
         "network": "2. Network Only (eBPF TCP) [ML Model]",
         "workload": "3. Workload Only (Metrics Server) [ML Model]",
-        "runtime": "4. Runtime Only (trace_exec) [Observational]",
-        "net_rt": "5. Network + Runtime [Observational Fusion]",
-        "rt_wl": "6. Runtime + Workload [Observational Fusion]",
-        "full_fusion": "7. Full Tri-Modal Fusion (Net + RT + WL)",
+        "runtime": "4. Runtime Only (trace_exec) [ML Model]",
+        "net_rt": "5. Network + Runtime [ML Fusion]",
+        "rt_wl": "6. Runtime + Workload [ML Fusion]",
+        "full_fusion": "7. Full Tri-Modal Fusion (Net + RT + WL) [ML Benchmark]",
     }
     all_modalities = [
         "fusion",

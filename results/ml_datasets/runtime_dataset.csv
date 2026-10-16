@@ -1,0 +1,12 @@
+window_start,window_end,cluster_id,capture_id,session_id,experiment_id,scenario,label,attack_type,runtime_error_count,runtime_event_count,runtime_exec_rate,runtime_interactive_shell_count,runtime_non_root_exec_count,runtime_root_exec_count,runtime_sensitive_command_count,runtime_unique_commands,runtime_unique_users
+2026-10-14T10:00:00.000Z,2026-10-14T10:00:10.000Z,minikube,sess_rt_01_nginx_start,sess_rt_01_nginx_start,exp_rt_controlled,runtime_normal,normal,normal,0,1,0.1,0,1,0,0,1,1
+2026-10-14T10:00:00.000Z,2026-10-14T10:00:10.000Z,minikube,sess_rt_02_cat_hosts,sess_rt_02_cat_hosts,exp_rt_controlled,runtime_normal,normal,normal,0,1,0.1,0,1,0,0,1,1
+2026-10-14T10:00:00.000Z,2026-10-14T10:00:10.000Z,minikube,sess_rt_03_env_probe,sess_rt_03_env_probe,exp_rt_controlled,runtime_normal,normal,normal,0,1,0.1,0,1,0,0,1,1
+2026-10-14T10:00:00.000Z,2026-10-14T10:00:10.000Z,minikube,sess_rt_04_whoami,sess_rt_04_whoami,exp_rt_controlled,runtime_attack,attack,reconnaissance,0,1,0.1,0,0,1,1,1,1
+2026-10-14T10:00:00.000Z,2026-10-14T10:00:10.000Z,minikube,sess_rt_05_id_probe,sess_rt_05_id_probe,exp_rt_controlled,runtime_attack,attack,reconnaissance,0,1,0.1,0,0,1,1,1,1
+2026-10-14T10:00:00.000Z,2026-10-14T10:00:10.000Z,minikube,sess_rt_06_bash_shell,sess_rt_06_bash_shell,exp_rt_controlled,runtime_attack,attack,interactive_shell,0,1,0.1,1,0,1,1,1,1
+2026-10-14T10:00:00.000Z,2026-10-14T10:00:10.000Z,minikube,sess_rt_07_sh_shell,sess_rt_07_sh_shell,exp_rt_controlled,runtime_attack,attack,interactive_shell,0,1,0.1,1,0,1,1,1,1
+2026-10-14T10:00:00.000Z,2026-10-14T10:00:10.000Z,minikube,sess_rt_08_nc_reverse,sess_rt_08_nc_reverse,exp_rt_controlled,runtime_attack,attack,reverse_shell,0,1,0.1,0,0,1,1,1,1
+2026-10-14T10:00:00.000Z,2026-10-14T10:00:10.000Z,minikube,sess_rt_09_nmap_scan,sess_rt_09_nmap_scan,exp_rt_controlled,runtime_attack,attack,lateral_movement,0,1,0.1,0,0,1,1,1,1
+2026-10-14T10:00:00.000Z,2026-10-14T10:00:10.000Z,minikube,sess_rt_10_chmod_suid,sess_rt_10_chmod_suid,exp_rt_controlled,runtime_attack,attack,privilege_escalation,0,1,0.1,0,0,1,1,1,1
+2026-10-14T10:00:00.000Z,2026-10-14T10:00:10.000Z,minikube,sess_rt_11_empty_idle,sess_rt_11_empty_idle,exp_rt_controlled,runtime_normal,normal,normal,0,0,0.0,0,0,0,0,0,0

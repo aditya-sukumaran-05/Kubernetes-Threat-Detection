@@ -145,15 +145,36 @@ class LiveWindowRecord:
     network_inferences: dict[str, InferenceResult] = field(default_factory=dict)
     workload_inferences: dict[str, InferenceResult] = field(default_factory=dict)
     fusion_inferences: dict[str, InferenceResult] = field(default_factory=dict)
+    runtime_inferences: dict[str, InferenceResult] = field(default_factory=dict)
+    net_rt_inferences: dict[str, InferenceResult] = field(default_factory=dict)
+    rt_wl_inferences: dict[str, InferenceResult] = field(default_factory=dict)
+    full_fusion_inferences: dict[str, InferenceResult] = field(default_factory=dict)
     last_inferred_net_event_count: int = -1
     last_inferred_wl_sample_count: int = -1
+    last_inferred_rt_event_count: int = -1
     last_net_fingerprint: tuple = ()
     last_wl_fingerprint: tuple = ()
+    last_rt_fingerprint: tuple = ()
 
     @property
     def is_fused(self) -> bool:
         """True if both network and workload telemetry are available."""
         return self.network_available and self.workload_available
+
+    @property
+    def is_net_rt_fused(self) -> bool:
+        """True if both network and runtime telemetry are available."""
+        return self.network_available and self.runtime_available
+
+    @property
+    def is_rt_wl_fused(self) -> bool:
+        """True if both runtime and workload telemetry are available."""
+        return self.runtime_available and self.workload_available
+
+    @property
+    def is_full_fused(self) -> bool:
+        """True if network, workload, and runtime telemetry are available."""
+        return self.network_available and self.workload_available and self.runtime_available
 
 
 class LiveTelemetryEngine:
@@ -305,7 +326,16 @@ class LiveTelemetryEngine:
                         self._network_partial_bytes = b""
                         self._network_header_bytes = b""
 
-                handle.seek(self._network_file_offset)
+                # Optimization: On cold startup with massive historical files (> 2 MB),
+                # seek to the last 1 MB so startup is instantaneous (~0.05s instead of 10s)
+                # while preserving more than enough window history for max_retained_windows.
+                if self._network_file_offset == 0 and st.st_size > 2 * 1024 * 1024:
+                    handle.seek(st.st_size - 1024 * 1024)
+                    handle.readline()  # Align to newline boundary
+                    self._network_file_offset = handle.tell()
+                else:
+                    handle.seek(self._network_file_offset)
+
                 chunk_bytes = handle.read()
                 self._network_file_offset = handle.tell()
         except OSError as exc:
@@ -391,7 +421,16 @@ class LiveTelemetryEngine:
                         self._workload_seen_samples.clear()
                         self._workload_header_bytes = b""
 
-                handle.seek(self._workload_file_offset)
+                # Optimization: On cold startup with massive historical files (> 500 KB),
+                # seek to the last 200 KB (~3,000 samples = ~4.5 hours of samples, far exceeding
+                # max_retained_windows=120 windows).
+                if self._workload_file_offset == 0 and st.st_size > 500 * 1024:
+                    handle.seek(st.st_size - 200 * 1024)
+                    handle.readline()  # Align to newline boundary
+                    self._workload_file_offset = handle.tell()
+                else:
+                    handle.seek(self._workload_file_offset)
+
                 chunk_bytes = handle.read()
                 self._workload_file_offset = handle.tell()
         except OSError as exc:
@@ -828,6 +867,8 @@ class LiveTelemetryEngine:
                 if record.last_inferred_net_event_count != net_count or record.last_net_fingerprint != net_fp:
                     record.network_inferences.clear()
                     record.fusion_inferences.clear()
+                    record.net_rt_inferences.clear()
+                    record.full_fusion_inferences.clear()
                     record.last_inferred_net_event_count = net_count
                     record.last_net_fingerprint = net_fp
 
@@ -841,12 +882,15 @@ class LiveTelemetryEngine:
                 if record.last_inferred_wl_sample_count != wl_count or record.last_wl_fingerprint != wl_fp:
                     record.workload_inferences.clear()
                     record.fusion_inferences.clear()
+                    record.rt_wl_inferences.clear()
+                    record.full_fusion_inferences.clear()
                     record.last_inferred_wl_sample_count = wl_count
                     record.last_wl_fingerprint = wl_fp
 
             # Attach runtime events and features for this window
             rev_list = runtime_events_by_start.get(start)
             if rev_list:
+                rt_count = len(rev_list)
                 record.runtime_available = True
                 record.runtime_events = rev_list
                 record.runtime_features = extract_runtime_features(rev_list)
@@ -855,6 +899,14 @@ class LiveTelemetryEngine:
                         if ev.pod:
                             record.affected_pods = ev.pod
                             break
+                rt_fp = _compute_feature_fingerprint(record.runtime_features)
+                if record.last_inferred_rt_event_count != rt_count or record.last_rt_fingerprint != rt_fp:
+                    record.runtime_inferences.clear()
+                    record.net_rt_inferences.clear()
+                    record.rt_wl_inferences.clear()
+                    record.full_fusion_inferences.clear()
+                    record.last_inferred_rt_event_count = rt_count
+                    record.last_rt_fingerprint = rt_fp
 
             # 3. Bounded Inference: Execute each model ONCE per window per modality
             # A. Network-only inference
@@ -890,6 +942,55 @@ class LiveTelemetryEngine:
                         )
                     except (InferenceSchemaError, Exception) as exc:
                         logger.warning("Fusion inference failed for window %s: %s", start, exc)
+
+            # D. Runtime-only inference
+            if record.runtime_available and record.runtime_features:
+                if model_name not in record.runtime_inferences:
+                    try:
+                        record.runtime_inferences[model_name] = self.detector.predict(
+                            record.runtime_features, modality="runtime", model_name=model_name
+                        )
+                    except (InferenceSchemaError, Exception) as exc:
+                        logger.warning("Runtime inference failed for window %s: %s", start, exc)
+
+            # E. Network + Runtime pairwise inference
+            if record.network_available and record.runtime_available and record.network_features and record.runtime_features:
+                if model_name not in record.net_rt_inferences:
+                    net_rt_dict = {**record.network_features, **record.runtime_features}
+                    net_rt_dict["affected_pods"] = record.affected_pods
+                    try:
+                        record.net_rt_inferences[model_name] = self.detector.predict(
+                            net_rt_dict, modality="net_rt", model_name=model_name
+                        )
+                    except (InferenceSchemaError, Exception) as exc:
+                        logger.warning("Net+RT inference failed for window %s: %s", start, exc)
+
+            # F. Runtime + Workload pairwise inference
+            if record.workload_available and record.runtime_available and record.workload_features and record.runtime_features:
+                if model_name not in record.rt_wl_inferences:
+                    rt_wl_dict = {**record.workload_features, **record.runtime_features}
+                    rt_wl_dict["affected_pods"] = record.affected_pods
+                    try:
+                        record.rt_wl_inferences[model_name] = self.detector.predict(
+                            rt_wl_dict, modality="rt_wl", model_name=model_name
+                        )
+                    except (InferenceSchemaError, Exception) as exc:
+                        logger.warning("RT+WL inference failed for window %s: %s", start, exc)
+
+            # G. Full Tri-Modal Fusion inference
+            if record.is_fused and record.runtime_available and record.network_features and record.workload_features and record.runtime_features:
+                if model_name not in record.full_fusion_inferences:
+                    full_dict = {**record.network_features, **record.workload_features, **record.runtime_features}
+                    full_dict["network_available"] = True
+                    full_dict["workload_available"] = True
+                    full_dict["runtime_available"] = True
+                    full_dict["affected_pods"] = record.affected_pods
+                    try:
+                        record.full_fusion_inferences[model_name] = self.detector.predict(
+                            full_dict, modality="full_fusion", model_name=model_name
+                        )
+                    except (InferenceSchemaError, Exception) as exc:
+                        logger.warning("Full fusion inference failed for window %s: %s", start, exc)
 
         # Return sorted list of active records
         return [self.windows[s] for s in sorted(self.windows) if s in all_starts]

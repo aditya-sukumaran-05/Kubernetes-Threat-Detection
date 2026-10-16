@@ -1,0 +1,182 @@
+{
+  "config": {
+    "name": "runtime",
+    "dataset": "results/ml_datasets/runtime_dataset.csv",
+    "features": [
+      "runtime_error_count",
+      "runtime_event_count",
+      "runtime_exec_rate",
+      "runtime_interactive_shell_count",
+      "runtime_non_root_exec_count",
+      "runtime_root_exec_count",
+      "runtime_sensitive_command_count",
+      "runtime_unique_commands",
+      "runtime_unique_users"
+    ],
+    "models": [
+      "random_forest",
+      "xgboost",
+      "svm"
+    ],
+    "random_seed": 42,
+    "output_dir": "results/runtime"
+  },
+  "dataset_sha256": "34dc8d923316d407c3350704d80ae116ea68ab8cfcc734df8f75b4f1595cedd4",
+  "python_version": "3.13.9",
+  "scikit_learn_version": "1.7.2",
+  "results": [
+    {
+      "telemetry": "runtime",
+      "model": "random_forest",
+      "status": "evaluated",
+      "split_strategy": "session_holdout_per_class",
+      "training_samples": 9,
+      "test_samples": 2,
+      "training_experiment_ids": [
+        "sess_rt_01_nginx_start",
+        "sess_rt_02_cat_hosts",
+        "sess_rt_04_whoami",
+        "sess_rt_05_id_probe",
+        "sess_rt_06_bash_shell",
+        "sess_rt_07_sh_shell",
+        "sess_rt_09_nmap_scan",
+        "sess_rt_10_chmod_suid",
+        "sess_rt_11_empty_idle"
+      ],
+      "test_experiment_ids": [
+        "sess_rt_03_env_probe",
+        "sess_rt_08_nc_reverse"
+      ],
+      "training_class_counts": {
+        "normal": 3,
+        "attack": 6
+      },
+      "test_class_counts": {
+        "normal": 1,
+        "attack": 1
+      },
+      "training_time_seconds": 0.13932309999654535,
+      "accuracy": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "false_positive_rate": 0.0,
+      "confusion_matrix": [
+        [
+          1,
+          0
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "inference_time_seconds": 0.0041628000035416335,
+      "inference_time_per_sample_seconds": 0.0020814000017708167,
+      "detection_latency_seconds": null,
+      "detection_latency_note": "Unavailable: no ground-truth attack onset event is available in the held-out data."
+    },
+    {
+      "telemetry": "runtime",
+      "model": "xgboost",
+      "status": "evaluated",
+      "split_strategy": "session_holdout_per_class",
+      "training_samples": 9,
+      "test_samples": 2,
+      "training_experiment_ids": [
+        "sess_rt_01_nginx_start",
+        "sess_rt_02_cat_hosts",
+        "sess_rt_04_whoami",
+        "sess_rt_05_id_probe",
+        "sess_rt_06_bash_shell",
+        "sess_rt_07_sh_shell",
+        "sess_rt_09_nmap_scan",
+        "sess_rt_10_chmod_suid",
+        "sess_rt_11_empty_idle"
+      ],
+      "test_experiment_ids": [
+        "sess_rt_03_env_probe",
+        "sess_rt_08_nc_reverse"
+      ],
+      "training_class_counts": {
+        "normal": 3,
+        "attack": 6
+      },
+      "test_class_counts": {
+        "normal": 1,
+        "attack": 1
+      },
+      "training_time_seconds": 0.02007179999782238,
+      "accuracy": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "false_positive_rate": 0.0,
+      "confusion_matrix": [
+        [
+          1,
+          0
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "inference_time_seconds": 0.0012559000024339184,
+      "inference_time_per_sample_seconds": 0.0006279500012169592,
+      "detection_latency_seconds": null,
+      "detection_latency_note": "Unavailable: no ground-truth attack onset event is available in the held-out data."
+    },
+    {
+      "telemetry": "runtime",
+      "model": "svm",
+      "status": "evaluated",
+      "split_strategy": "session_holdout_per_class",
+      "training_samples": 9,
+      "test_samples": 2,
+      "training_experiment_ids": [
+        "sess_rt_01_nginx_start",
+        "sess_rt_02_cat_hosts",
+        "sess_rt_04_whoami",
+        "sess_rt_05_id_probe",
+        "sess_rt_06_bash_shell",
+        "sess_rt_07_sh_shell",
+        "sess_rt_09_nmap_scan",
+        "sess_rt_10_chmod_suid",
+        "sess_rt_11_empty_idle"
+      ],
+      "test_experiment_ids": [
+        "sess_rt_03_env_probe",
+        "sess_rt_08_nc_reverse"
+      ],
+      "training_class_counts": {
+        "normal": 3,
+        "attack": 6
+      },
+      "test_class_counts": {
+        "normal": 1,
+        "attack": 1
+      },
+      "training_time_seconds": 0.002226399999926798,
+      "accuracy": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "false_positive_rate": 0.0,
+      "confusion_matrix": [
+        [
+          1,
+          0
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "inference_time_seconds": 0.00044770000386051834,
+      "inference_time_per_sample_seconds": 0.00022385000193025917,
+      "detection_latency_seconds": null,
+      "detection_latency_note": "Unavailable: no ground-truth attack onset event is available in the held-out data."
+    }
+  ]
+}

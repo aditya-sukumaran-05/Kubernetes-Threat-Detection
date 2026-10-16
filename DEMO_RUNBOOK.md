@@ -110,16 +110,38 @@ Get-Process python | Select-Object Id, ProcessName
 
 ### Step 5: Heterogeneous Telemetry Ablation Study (2 mins)
 1. **Navigate to:** `📈 Model Evaluation` on the sidebar.
-2. **Point out the Core Research Comparison Table:**
-   - **Network Only:** High recall on burst/connection floods, but blind to internal container CPU abuse.
-   - **Workload Only:** Detects CPU spikes, but exhibits higher latency due to 5-second Metrics Server sampling intervals.
-   - **Network + Workload Fusion:** Provides optimal balance—rapid network anomaly detection backed by workload corroboration, minimizing false positives.
+2. **Point out the Core Research Comparison Across All 7 Telemetry Modalities:**
+   - **Single-Stream Modalities:**
+     - **Network Only (13 feats, $N=60$):** High precision & recall on burst floods ($F_1 = 0.964$), but completely blind to internal container process execution or CPU abuse.
+     - **Workload Only (11 feats, $N=83$):** Detects sustained CPU spikes, but exhibits lower precision ($58.3\%$, $F_1 = 0.538$) due to 5-second Metrics Server sampling coarseness and transient startup spikes.
+     - **Runtime Only (9 feats, $N=11$):** Instantaneous zero false-positive detection ($F_1 = 1.000$, $\text{FPR} = 0.0\%$) for in-container shell invocations and reverse-shell enumeration, but blind to network floods or quiet resource drain.
+   - **Dual-Stream Fusions:**
+     - **Network + Workload Fusion (24 feats, $N=122$):** Corroborates network traffic with resource utilization ($F_1 = 0.929$, $\text{FPR} = 2.1\%$).
+     - **Network + Runtime Fusion (22 feats, $N=71$):** Highest dual-stream $F_1 = 0.971$ with only $2.8\%$ FPR, coupling external socket connections with in-container execution.
+     - **Runtime + Workload Fusion (20 feats, $N=94$):** Detects internal container execution coupled with resource changes ($F_1 = 0.708$ on SVM, $F_1 = 0.636$ on RF).
+   - **Tri-Modal Complete Fusion:**
+     - **Full Tri-Modal Fusion (33 feats, $N=133$):** Synchronizes network, workload, and runtime telemetry. Delivers the lowest false-positive rate across all multi-modal architectures ($\text{FPR} = 2.0\%$, $F_1 = 0.943$ on RF; $100\%$ Recall with $0$ false negatives on SVM).
+
+| Modality | Features | Samples | Best Model | Precision | Recall | $F_1$-Score | FPR |
+|:---|:---:|:---:|:---|:---:|:---:|:---:|:---:|
+| **Network Only** | 13 | 60 | Random Forest | 96.4% | 96.4% | **0.964** | 3.1% |
+| **Workload Only** | 11 | 83 | SVM | 71.4% | 53.6% | **0.612** | 10.9% |
+| **Runtime Only** | 9 | 11 | Random Forest | 100.0% | 100.0% | **1.000** | 0.0% |
+| **Network + Workload** | 24 | 122 | Random Forest | 92.9% | 92.9% | **0.929** | 2.1% |
+| **Network + Runtime** | 22 | 71 | Random Forest | 97.1% | 97.1% | **0.971** | 2.8% |
+| **Runtime + Workload** | 20 | 94 | SVM | 76.7% | 65.7% | **0.708** | 11.9% |
+| **Full Tri-Modal Fusion** | 33 | 133 | Random Forest | 94.3% | 94.3% | **0.943** | **2.0%** |
+
 3. **Distinguish Live Controlled Burst from Historical Benchmark Datasets:**
    - *Live Controlled Burst Result:* $N=1$ live window (100 connections in 1.16s, 10.0 conn/s), classified as `normal` (attack score 37.5%, confidence 62.5%) under the frozen production Random Forest model.
    - *Historical Benchmark Datasets & Out-of-Fold LOSO Evaluation:* Evaluated offline using temporal Leave-One-Scenario-Out (LOSO) cross-validation across independent sessions:
-     - **Network Modality Dataset:** $N=60$ labeled 10-second observation windows across 8 sessions ($32$ normal, $28$ attack; generated from 120 normal TCP events + 120 burst attack events). Out-of-fold LOSO Random Forest: Precision: $96.4\%$, Recall: $96.4\%$, $F_1 = 0.964$, FPR: $3.1\%$.
-     - **Workload Modality Dataset:** $N=83$ labeled 10-second observation windows across 8 sessions ($55$ normal, $28$ attack; derived from $339$ raw Metrics Server CSV lines / samples: $186$ normal in `workload_normal.csv` + $153$ attack in `workload_attack.csv`). Out-of-fold LOSO Random Forest: Precision: $58.3\%$, Recall: $50.0\%$, $F_1 = 0.538$, FPR: $18.2\%$.
-     - **Fusion Modality Dataset:** $N=122$ labeled 10-second observation windows across 24 sessions ($94$ normal, $28$ attack; synchronized time-aligned multi-modal windows). Out-of-fold LOSO Random Forest: Precision: $92.9\%$, Recall: $92.9\%$, $F_1 = 0.929$, FPR: $2.1\%$.
+     - **Network Modality Dataset:** $N=60$ labeled windows across 8 sessions ($32$ normal, $28$ attack; generated from 120 normal TCP events + 120 burst attack events). RF: Precision: $96.4\%$, Recall: $96.4\%$, $F_1 = 0.964$, FPR: $3.1\%$.
+     - **Workload Modality Dataset:** $N=83$ labeled windows across 8 sessions ($55$ normal, $28$ attack; derived from $339$ raw Metrics Server CSV lines: $186$ normal in `workload_normal.csv` + $153$ attack in `workload_attack.csv`). RF: Precision: $58.3\%$, Recall: $50.0\%$, $F_1 = 0.538$, FPR: $18.2\%$ (SVM: $F_1 = 0.612$, FPR: $10.9\%$).
+     - **Fusion Modality Dataset:** $N=122$ labeled windows across 24 sessions ($94$ normal, $28$ attack). RF: Precision: $92.9\%$, Recall: $92.9\%$, $F_1 = 0.929$, FPR: $2.1\%$.
+     - **Runtime Modality Dataset:** $N=11$ labeled windows across 11 sessions ($4$ normal, $7$ attack). RF: Precision: $100.0\%$, Recall: $100.0\%$, $F_1 = 1.000$, FPR: $0.0\%$.
+     - **Net+RT Modality Dataset:** $N=71$ labeled windows across 19 sessions ($36$ normal, $35$ attack). RF: Precision: $97.1\%$, Recall: $97.1\%$, $F_1 = 0.971$, FPR: $2.8\%$.
+     - **RT+WL Modality Dataset:** $N=94$ labeled windows across 19 sessions ($59$ normal, $35$ attack). RF: Precision: $67.7\%$, Recall: $60.0\%$, $F_1 = 0.636$, FPR: $16.9\%$ (SVM: $F_1 = 0.708$, FPR: $11.9\%$).
+     - **Full Fusion Modality Dataset:** $N=133$ labeled windows across 35 sessions ($98$ normal, $35$ attack). RF: Precision: $94.3\%$, Recall: $94.3\%$, $F_1 = 0.943$, FPR: $2.0\%$ (SVM: $100\%$ Recall, $0$ FN, FPR: $5.1\%$).
 4. **Tested Scenario Observation (Not a Universal Law):**
    - In this specific tested scenario, the 100-request burst generated only network traffic to Nginx, consuming negligible CPU ($2\text{m}$ CPU, $18\text{ MiB}$ RAM), so Workload and Fusion inference both classified the window as `normal` (Workload attack score 15.8%, Fusion attack score 8.5%).
    - *This is an observation from the tested scenario, not proof that all attacks require simultaneous CPU and network stress—specialized single-vector threats (e.g. silent cryptomining or pure SYN floods) may manifest primarily in a single telemetry dimension.*

@@ -14,8 +14,9 @@ import numpy as np
 from experiments.alignment import align_feature_windows
 from ml.train import load_config
 from telemetry.features.network import extract_network_features
+from telemetry.features.runtime import extract_runtime_features, extract_runtime_window_features
 from telemetry.features.workload import extract_workload_features
-from telemetry.schemas import NetworkEvent, WorkloadSample
+from telemetry.schemas import NetworkEvent, RuntimeEvent, WorkloadSample
 from telemetry.security import validate_finite_float
 
 
@@ -32,7 +33,7 @@ class InferenceResult:
     confidence: float | None
     window_start: str | None
     window_end: str | None
-    modality: str  # "network", "workload", "fusion"
+    modality: str  # "network", "workload", "fusion", "runtime", "net_rt", "rt_wl", "full_fusion"
     model_name: str  # "random_forest", "xgboost", "svm"
     evidence: dict[str, Any]
     affected_pods: str | None = None
@@ -42,9 +43,17 @@ class InferenceResult:
 
 
 class ThreatDetector:
-    """Callable inference engine supporting network, workload, and fusion telemetry."""
+    """Callable inference engine supporting all individual and multimodal telemetry combinations."""
 
-    SUPPORTED_MODALITIES = ("network", "workload", "fusion")
+    SUPPORTED_MODALITIES = (
+        "network",
+        "workload",
+        "fusion",
+        "runtime",
+        "net_rt",
+        "rt_wl",
+        "full_fusion",
+    )
     SUPPORTED_MODELS = ("random_forest", "xgboost", "svm")
 
     def __init__(
@@ -220,6 +229,105 @@ class ThreatDetector:
             w["attack_type"] = "unknown"
         fusion_windows = align_feature_windows(net_windows, workload_windows)
         return [self.predict(w, modality="fusion", model_name=model_name) for w in fusion_windows]
+
+    def predict_runtime_events(
+        self, events: Sequence[RuntimeEvent], model_name: str = "random_forest"
+    ) -> list[InferenceResult]:
+        """Aggregate raw process execution events into 10s windows and infer threat state."""
+        windows = extract_runtime_window_features(list(events))
+        return [self.predict(w, modality="runtime", model_name=model_name) for w in windows]
+
+    def predict_net_rt_telemetry(
+        self,
+        network_events: Sequence[NetworkEvent],
+        runtime_events: Sequence[RuntimeEvent],
+        session_id: str = "live_session",
+        model_name: str = "random_forest",
+    ) -> list[InferenceResult]:
+        """Time-align raw network and runtime telemetry and infer on pairwise windows."""
+        net_windows = extract_network_features(list(network_events))
+        rt_windows = extract_runtime_window_features(list(runtime_events))
+        for w in net_windows:
+            w["session_id"] = session_id
+            w["label"] = "unknown"
+            w["attack_type"] = "unknown"
+        for w in rt_windows:
+            w["session_id"] = session_id
+            w["label"] = "unknown"
+            w["attack_type"] = "unknown"
+        aligned_windows = align_feature_windows(net_windows, [], runtime_rows=rt_windows)
+        rt_reqs = self.get_required_features("runtime")
+        net_reqs = self.get_required_features("network")
+        for w in aligned_windows:
+            for f in rt_reqs:
+                if f not in w or w[f] is None:
+                    w[f] = 0.0
+            for f in net_reqs:
+                if f not in w or w[f] is None:
+                    w[f] = 0.0
+        return [self.predict(w, modality="net_rt", model_name=model_name) for w in aligned_windows]
+
+    def predict_rt_wl_telemetry(
+        self,
+        workload_samples: Sequence[WorkloadSample],
+        runtime_events: Sequence[RuntimeEvent],
+        session_id: str = "live_session",
+        model_name: str = "random_forest",
+    ) -> list[InferenceResult]:
+        """Time-align raw workload and runtime telemetry and infer on pairwise windows."""
+        wl_windows = extract_workload_features(list(workload_samples))
+        rt_windows = extract_runtime_window_features(list(runtime_events))
+        for w in wl_windows:
+            w["session_id"] = session_id
+            w["label"] = "unknown"
+            w["attack_type"] = "unknown"
+        for w in rt_windows:
+            w["session_id"] = session_id
+            w["label"] = "unknown"
+            w["attack_type"] = "unknown"
+        aligned_windows = align_feature_windows([], wl_windows, runtime_rows=rt_windows)
+        rt_reqs = self.get_required_features("runtime")
+        wl_reqs = self.get_required_features("workload")
+        for w in aligned_windows:
+            for f in rt_reqs:
+                if f not in w or w[f] is None:
+                    w[f] = 0.0
+            for f in wl_reqs:
+                if f not in w or w[f] is None:
+                    w[f] = 0.0
+        return [self.predict(w, modality="rt_wl", model_name=model_name) for w in aligned_windows]
+
+    def predict_full_fusion_telemetry(
+        self,
+        network_events: Sequence[NetworkEvent],
+        workload_samples: Sequence[WorkloadSample],
+        runtime_events: Sequence[RuntimeEvent],
+        session_id: str = "live_session",
+        model_name: str = "random_forest",
+    ) -> list[InferenceResult]:
+        """Time-align raw network, workload, and runtime telemetry and infer on full tri-modal windows."""
+        net_windows = extract_network_features(list(network_events))
+        wl_windows = extract_workload_features(list(workload_samples))
+        rt_windows = extract_runtime_window_features(list(runtime_events))
+        for w in net_windows:
+            w["session_id"] = session_id
+            w["label"] = "unknown"
+            w["attack_type"] = "unknown"
+        for w in wl_windows:
+            w["session_id"] = session_id
+            w["label"] = "unknown"
+            w["attack_type"] = "unknown"
+        for w in rt_windows:
+            w["session_id"] = session_id
+            w["label"] = "unknown"
+            w["attack_type"] = "unknown"
+        aligned_windows = align_feature_windows(net_windows, wl_windows, runtime_rows=rt_windows)
+        all_reqs = self.get_required_features("full_fusion")
+        for w in aligned_windows:
+            for f in all_reqs:
+                if f not in w or w[f] is None:
+                    w[f] = 0.0
+        return [self.predict(w, modality="full_fusion", model_name=model_name) for w in aligned_windows]
 
 
 def predict_window(

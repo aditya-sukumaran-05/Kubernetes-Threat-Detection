@@ -1,0 +1,98 @@
+{
+  "telemetry": "runtime",
+  "dataset": "results/ml_datasets/runtime_dataset.csv",
+  "features": [
+    "runtime_error_count",
+    "runtime_event_count",
+    "runtime_exec_rate",
+    "runtime_interactive_shell_count",
+    "runtime_non_root_exec_count",
+    "runtime_root_exec_count",
+    "runtime_sensitive_command_count",
+    "runtime_unique_commands",
+    "runtime_unique_users"
+  ],
+  "models": [
+    {
+      "telemetry": "runtime",
+      "model": "random_forest",
+      "total_folds": 11,
+      "valid_folds": 11,
+      "invalid_folds": 0,
+      "total_samples": 11,
+      "aggregate_accuracy": 1.0,
+      "aggregate_precision": 1.0,
+      "aggregate_recall": 1.0,
+      "aggregate_f1": 1.0,
+      "aggregate_false_positive_rate": 0.0,
+      "aggregate_confusion_matrix": [
+        [
+          4,
+          0
+        ],
+        [
+          0,
+          7
+        ]
+      ],
+      "mean_session_f1": 0.6363636363636364,
+      "std_session_f1": 0.504524979109513,
+      "attack_sessions_mean_f1": 1.0,
+      "attack_sessions_std_f1": 0.0
+    },
+    {
+      "telemetry": "runtime",
+      "model": "xgboost",
+      "total_folds": 11,
+      "valid_folds": 11,
+      "invalid_folds": 0,
+      "total_samples": 11,
+      "aggregate_accuracy": 0.9090909090909091,
+      "aggregate_precision": 0.875,
+      "aggregate_recall": 1.0,
+      "aggregate_f1": 0.9333333333333333,
+      "aggregate_false_positive_rate": 0.25,
+      "aggregate_confusion_matrix": [
+        [
+          3,
+          1
+        ],
+        [
+          0,
+          7
+        ]
+      ],
+      "mean_session_f1": 0.6363636363636364,
+      "std_session_f1": 0.504524979109513,
+      "attack_sessions_mean_f1": 1.0,
+      "attack_sessions_std_f1": 0.0
+    },
+    {
+      "telemetry": "runtime",
+      "model": "svm",
+      "total_folds": 11,
+      "valid_folds": 11,
+      "invalid_folds": 0,
+      "total_samples": 11,
+      "aggregate_accuracy": 0.9090909090909091,
+      "aggregate_precision": 0.875,
+      "aggregate_recall": 1.0,
+      "aggregate_f1": 0.9333333333333333,
+      "aggregate_false_positive_rate": 0.25,
+      "aggregate_confusion_matrix": [
+        [
+          3,
+          1
+        ],
+        [
+          0,
+          7
+        ]
+      ],
+      "mean_session_f1": 0.6363636363636364,
+      "std_session_f1": 0.504524979109513,
+      "attack_sessions_mean_f1": 1.0,
+      "attack_sessions_std_f1": 0.0
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+actual_label,attack_probability,predicted_label,session_id,window_start
+normal,1.7025115648918842e-06,normal,sess_rt_01_nginx_start,2026-10-14T10:00:00.000Z
+normal,1.7025115648918842e-06,normal,sess_rt_02_cat_hosts,2026-10-14T10:00:00.000Z
+normal,1.7025115648918842e-06,normal,sess_rt_03_env_probe,2026-10-14T10:00:00.000Z
+attack,0.8386941507076859,attack,sess_rt_04_whoami,2026-10-14T10:00:00.000Z
+attack,0.8386941507076859,attack,sess_rt_05_id_probe,2026-10-14T10:00:00.000Z
+attack,0.8360359029946457,attack,sess_rt_06_bash_shell,2026-10-14T10:00:00.000Z
+attack,0.8360359029946457,attack,sess_rt_07_sh_shell,2026-10-14T10:00:00.000Z
+attack,0.8386680884608881,attack,sess_rt_08_nc_reverse,2026-10-14T10:00:00.000Z
+attack,0.8386680884608881,attack,sess_rt_09_nmap_scan,2026-10-14T10:00:00.000Z
+attack,0.8386680884608881,attack,sess_rt_10_chmod_suid,2026-10-14T10:00:00.000Z
+normal,0.6270796330185887,attack,sess_rt_11_empty_idle,2026-10-14T10:00:00.000Z

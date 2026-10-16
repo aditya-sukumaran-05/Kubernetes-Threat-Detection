@@ -1,0 +1,111 @@
+{
+  "telemetry": "net_rt",
+  "dataset": "results/ml_datasets/net_rt_dataset.csv",
+  "features": [
+    "network_accept_count",
+    "network_close_count",
+    "network_connection_count",
+    "network_connection_rate",
+    "network_error_count",
+    "network_event_count",
+    "network_interarrival_max_seconds",
+    "network_interarrival_mean_seconds",
+    "network_interarrival_min_seconds",
+    "network_interarrival_std_seconds",
+    "network_unique_destination_ips",
+    "network_unique_source_ips",
+    "network_unique_source_ports",
+    "runtime_error_count",
+    "runtime_event_count",
+    "runtime_exec_rate",
+    "runtime_interactive_shell_count",
+    "runtime_non_root_exec_count",
+    "runtime_root_exec_count",
+    "runtime_sensitive_command_count",
+    "runtime_unique_commands",
+    "runtime_unique_users"
+  ],
+  "models": [
+    {
+      "telemetry": "net_rt",
+      "model": "random_forest",
+      "total_folds": 19,
+      "valid_folds": 19,
+      "invalid_folds": 0,
+      "total_samples": 71,
+      "aggregate_accuracy": 0.971830985915493,
+      "aggregate_precision": 0.9714285714285714,
+      "aggregate_recall": 0.9714285714285714,
+      "aggregate_f1": 0.9714285714285714,
+      "aggregate_false_positive_rate": 0.027777777777777776,
+      "aggregate_confusion_matrix": [
+        [
+          35,
+          1
+        ],
+        [
+          1,
+          34
+        ]
+      ],
+      "mean_session_f1": 0.5714285714285715,
+      "std_session_f1": 0.5016977977548923,
+      "attack_sessions_mean_f1": 0.987012987012987,
+      "attack_sessions_std_f1": 0.043073049225394816
+    },
+    {
+      "telemetry": "net_rt",
+      "model": "xgboost",
+      "total_folds": 19,
+      "valid_folds": 19,
+      "invalid_folds": 0,
+      "total_samples": 71,
+      "aggregate_accuracy": 0.9295774647887324,
+      "aggregate_precision": 1.0,
+      "aggregate_recall": 0.8571428571428571,
+      "aggregate_f1": 0.9230769230769231,
+      "aggregate_false_positive_rate": 0.0,
+      "aggregate_confusion_matrix": [
+        [
+          36,
+          0
+        ],
+        [
+          5,
+          30
+        ]
+      ],
+      "mean_session_f1": 0.5538461538461539,
+      "std_session_f1": 0.49350815176447504,
+      "attack_sessions_mean_f1": 0.9566433566433566,
+      "attack_sessions_std_f1": 0.12051530027702159
+    },
+    {
+      "telemetry": "net_rt",
+      "model": "svm",
+      "total_folds": 19,
+      "valid_folds": 19,
+      "invalid_folds": 0,
+      "total_samples": 71,
+      "aggregate_accuracy": 0.9154929577464789,
+      "aggregate_precision": 0.8717948717948718,
+      "aggregate_recall": 0.9714285714285714,
+      "aggregate_f1": 0.918918918918919,
+      "aggregate_false_positive_rate": 0.1388888888888889,
+      "aggregate_confusion_matrix": [
+        [
+          31,
+          5
+        ],
+        [
+          1,
+          34
+        ]
+      ],
+      "mean_session_f1": 0.5609022556390978,
+      "std_session_f1": 0.49274806181730696,
+      "attack_sessions_mean_f1": 0.9688311688311688,
+      "attack_sessions_std_f1": 0.04801566431686367
+    }
+  ]
+}

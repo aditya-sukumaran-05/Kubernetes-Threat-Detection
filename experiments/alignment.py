@@ -578,19 +578,25 @@ def reprocess_orchestrator_session(
 
 
 def align_feature_windows(
-    network_rows: list[dict[str, object]], workload_rows: list[dict[str, object]]
+    network_rows: list[dict[str, object]],
+    workload_rows: list[dict[str, object]],
+    runtime_rows: list[dict[str, object]] | None = None,
 ) -> list[dict[str, object]]:
-    """Outer-join network and workload windows from the *same* session only.
+    """Outer-join network, workload, and runtime windows from the *same* session only.
 
     Missing telemetry is explicit.  Different sessions are rejected so that
     separate captures cannot accidentally be presented as multimodal fusion.
     """
-    sessions = {str(row["session_id"]) for row in [*network_rows, *workload_rows]}
+    all_rows = [*network_rows, *workload_rows, *(runtime_rows or [])]
+    if not all_rows:
+        return []
+
+    sessions = {str(row["session_id"]) for row in all_rows if "session_id" in row}
     if len(sessions) > 1:
         raise ValueError("cannot align captures from different experiment sessions")
     clusters = {
         str(row.get("cluster_id") or "minikube")
-        for row in [*network_rows, *workload_rows]
+        for row in all_rows
     }
     if len(clusters) > 1:
         raise ValueError("cannot align captures from different clusters")
@@ -606,27 +612,37 @@ def align_feature_windows(
 
     network_by_window = _index_windows(network_rows, "network")
     workload_by_window = _index_windows(workload_rows, "workload")
+    runtime_by_window = _index_windows(runtime_rows or [], "runtime")
+
+    all_keys = sorted(set(network_by_window) | set(workload_by_window) | set(runtime_by_window))
     aligned: list[dict[str, object]] = []
-    for key in sorted(set(network_by_window) | set(workload_by_window)):
-        network, workload = network_by_window.get(key), workload_by_window.get(key)
-        base = network or workload
+    for key in all_keys:
+        network = network_by_window.get(key)
+        workload = workload_by_window.get(key)
+        runtime = runtime_by_window.get(key)
+        base = network or workload or runtime
         assert base is not None
         row: dict[str, object] = {
             "window_start": key,
             "window_end": base["window_end"],
             "cluster_id": base.get("cluster_id") or "minikube",
-            "session_id": base["session_id"],
+            "session_id": base.get("session_id", "unknown_session"),
             "network_available": network is not None,
             "workload_available": workload is not None,
+            "runtime_available": runtime is not None,
         }
         for attr in ("scenario", "experiment_id", "capture_id"):
             if attr in base:
                 row[attr] = base[attr]
-        for source_row, prefix in ((network, "network_"), (workload, "workload_")):
+        for source_row, prefix in (
+            (network, "network_"),
+            (workload, "workload_"),
+            (runtime, "runtime_"),
+        ):
             if source_row:
                 row.update({name: value for name, value in source_row.items() if name.startswith(prefix)})
-        labels = {str(item["label"]) for item in (network, workload) if item is not None}
-        attack_types = {str(item["attack_type"]) for item in (network, workload) if item is not None}
+        labels = {str(item["label"]) for item in (network, workload, runtime) if item is not None and "label" in item}
+        attack_types = {str(item["attack_type"]) for item in (network, workload, runtime) if item is not None and "attack_type" in item}
         row["label"] = labels.pop() if len(labels) == 1 else "unknown"
         row["attack_type"] = attack_types.pop() if len(attack_types) == 1 else "unknown"
         aligned.append(row)

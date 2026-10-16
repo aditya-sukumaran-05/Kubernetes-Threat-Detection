@@ -1,0 +1,22 @@
+{
+  "name": "runtime",
+  "dataset": "results/ml_datasets/runtime_dataset.csv",
+  "features": [
+    "runtime_error_count",
+    "runtime_event_count",
+    "runtime_exec_rate",
+    "runtime_interactive_shell_count",
+    "runtime_non_root_exec_count",
+    "runtime_root_exec_count",
+    "runtime_sensitive_command_count",
+    "runtime_unique_commands",
+    "runtime_unique_users"
+  ],
+  "models": [
+    "random_forest",
+    "xgboost",
+    "svm"
+  ],
+  "random_seed": 42,
+  "output_dir": "results/runtime"
+}

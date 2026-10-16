@@ -1,0 +1,3 @@
+actual_label,attack_probability,predicted_label,session_id,window_start
+normal,0.1283523658573309,normal,sess_rt_03_env_probe,2026-10-14T10:00:00.000Z
+attack,0.8455881977050185,attack,sess_rt_08_nc_reverse,2026-10-14T10:00:00.000Z

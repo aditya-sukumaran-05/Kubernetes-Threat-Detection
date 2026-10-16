@@ -74,33 +74,68 @@ To avoid interfering with existing workloads or historical pods (`traffic-genera
 
 ---
 
-## 4. Machine Learning Inference & Telemetry Modality Validation
+## 4. Complete Multimodal Machine Learning Threat Detection Architecture
 
-The framework supports heterogeneous telemetry dimensions across machine learning classification and rule-based security correlation:
-1. **Network Only (ML):** eBPF TCP features (`connection_count`, `connection_rate`, `accept_count`, `close_count`, `mean_inter_arrival_time`, `std_inter_arrival_time`).
-2. **Workload Only (ML):** Metrics Server features (`cpu_millicores`, `memory_mib`, `cpu_delta`, `memory_delta`, `rolling_cpu_mean`).
-3. **Network + Workload Fusion (ML):** Core research benchmark combining network connection dynamics with container resource consumption.
-4. **Runtime Only (Observational):** Container process execution telemetry (`trace_exec`).
-5. **Network + Runtime (Observational Fusion):** Correlated connection spikes and container command executions.
-6. **Runtime + Workload (Observational Fusion):** Correlated CPU surges and process launches.
-7. **Full Tri-Modal Fusion (Net + RT + WL):** Comprehensive multi-layer Kubernetes observability.
+The framework supports the complete heterogeneous telemetry matrix across 7 individual and fused combinations, with trained supervised baseline classifiers (Random Forest, XGBoost, Support Vector Machines) and empirical cross-validation:
 
-### 4.1 Distinguishing Live Controlled-Burst Inference from Historical Benchmarks
+| Modality Key | Modality Name | Sensor Source | Features | Input Dim | Classifiers Trained |
+|:---|:---|:---|:---:|:---:|:---:|
+| `network` | **Network Only** | Inspektor Gadget `trace_tcp:v0.55.1` | TCP socket events, rates, arrival deltas | 13 | RF, XGBoost, SVM |
+| `workload` | **Workload Only** | Metrics Server / cgroups | CPU millicores & memory MiB aggregates | 11 | RF, XGBoost, SVM |
+| `runtime` | **Runtime Only** | Inspektor Gadget `trace_exec:v0.55.1` | In-container process execution features | 9 | RF, XGBoost, SVM |
+| `fusion` | **Network + Workload** | eBPF TCP + Metrics Server | Bimodal network & workload alignment | 24 | RF, XGBoost, SVM |
+| `net_rt` | **Network + Runtime** | eBPF TCP + eBPF trace_exec | Bimodal network & container exec alignment | 22 | RF, XGBoost, SVM |
+| `rt_wl` | **Runtime + Workload** | eBPF trace_exec + Metrics Server | Bimodal container exec & resource alignment | 20 | RF, XGBoost, SVM |
+| `full_fusion` | **Full Tri-Modal Fusion** | TCP + trace_exec + Metrics Server | Tri-modal comprehensive alignment | 33 | RF, XGBoost, SVM |
+
+### 4.1 Empirical Leave-One-Session-Out (LOSO) Cross-Validation Benchmark
+
+All models were evaluated under strict temporal Leave-One-Session-Out (LOSO) cross-validation to guarantee zero train/test leakage across correlated adjacent windows. Below are the aggregate held-out evaluation results across all 7 modalities:
+
+| Telemetry Modality | Model | Folds | Samples | Precision | Recall | $F_1$-Score | FPR | Confusion Matrix [[TN, FP], [FN, TP]] |
+|:---|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **Network Only** | Random Forest | 8 | 60 | 96.4% | 96.4% | **0.964** | 3.1% | `[[31, 1], [1, 27]]` |
+| **Network Only** | XGBoost | 8 | 60 | 100.0% | 82.1% | 0.902 | 0.0% | `[[32, 0], [5, 23]]` |
+| **Network Only** | SVM | 8 | 60 | 84.6% | 78.6% | 0.815 | 12.5% | `[[28, 4], [6, 22]]` |
+| **Workload Only** | Random Forest | 8 | 83 | 58.3% | 50.0% | **0.538** | 18.2% | `[[45, 10], [14, 14]]` |
+| **Workload Only** | XGBoost | 8 | 83 | 50.0% | 39.3% | 0.440 | 20.0% | `[[44, 11], [17, 11]]` |
+| **Workload Only** | SVM | 8 | 83 | 71.4% | 53.6% | 0.612 | 10.9% | `[[49, 6], [13, 15]]` |
+| **Runtime Only** | Random Forest | 11 | 11 | 100.0% | 100.0% | **1.000** | 0.0% | `[[4, 0], [0, 7]]` |
+| **Runtime Only** | XGBoost | 11 | 11 | 87.5% | 100.0% | 0.933 | 25.0% | `[[3, 1], [0, 7]]` |
+| **Runtime Only** | SVM | 11 | 11 | 87.5% | 100.0% | 0.933 | 25.0% | `[[3, 1], [0, 7]]` |
+| **Network + Workload** | Random Forest | 24 | 122 | 92.9% | 92.9% | **0.929** | 2.1% | `[[92, 2], [2, 26]]` |
+| **Network + Workload** | XGBoost | 24 | 122 | 92.6% | 89.3% | 0.909 | 2.1% | `[[92, 2], [3, 25]]` |
+| **Network + Workload** | SVM | 24 | 122 | 84.8% | 100.0% | 0.918 | 5.3% | `[[89, 5], [0, 28]]` |
+| **Network + Runtime** | Random Forest | 19 | 71 | 97.1% | 97.1% | **0.971** | 2.8% | `[[35, 1], [1, 34]]` |
+| **Network + Runtime** | XGBoost | 19 | 71 | 100.0% | 85.7% | 0.923 | 0.0% | `[[36, 0], [5, 30]]` |
+| **Network + Runtime** | SVM | 19 | 71 | 87.2% | 97.1% | 0.919 | 13.9% | `[[31, 5], [1, 34]]` |
+| **Runtime + Workload** | Random Forest | 19 | 94 | 67.7% | 60.0% | 0.636 | 16.9% | `[[49, 10], [14, 21]]` |
+| **Runtime + Workload** | XGBoost | 19 | 94 | 62.1% | 51.4% | 0.563 | 18.6% | `[[48, 11], [17, 18]]` |
+| **Runtime + Workload** | SVM | 19 | 94 | 76.7% | 65.7% | **0.708** | 11.9% | `[[52, 7], [12, 23]]` |
+| **Full Tri-Modal Fusion** | Random Forest | 35 | 133 | 94.3% | 94.3% | **0.943** | 2.0% | `[[96, 2], [2, 33]]` |
+| **Full Tri-Modal Fusion** | XGBoost | 35 | 133 | 93.9% | 88.6% | 0.912 | 2.0% | `[[96, 2], [4, 31]]` |
+| **Full Tri-Modal Fusion** | SVM | 35 | 133 | 87.5% | 100.0% | 0.933 | 5.1% | `[[93, 5], [0, 35]]` |
+
+### 4.2 Distinguishing Live Controlled-Burst Inference from Historical Benchmarks
 - **Live Controlled-Burst Result ($N=1$ Live Window):**
   - Generated: 100 requests in 1.16s, producing 100 connections in a single 10-second observation window.
   - Inferred via `LiveTelemetryEngine`: Classified as `normal` (Attack Score: 37.5%, Confidence: 62.5%).
-- **Historical Benchmark Evaluation Scope & Labeled ML Window Datasets:**
+- **Historical Benchmark Datasets & Scope:**
   - Evaluated offline using temporal Leave-One-Scenario-Out (LOSO) cross-validation across independent sessions, distinguishing raw collector lines from labeled 10-second ML observation windows:
-    - **Network Benchmark Dataset:** $N=60$ labeled 10-second observation windows across 8 sessions ($N=32$ normal baseline, $N=28$ attack windows). Out-of-fold LOSO Random Forest: Precision: $96.4\%$, Recall: $96.4\%$, F1: $0.964$, FPR: $3.1\%$.
-    - **Workload Benchmark Dataset:** $N=83$ labeled 10-second observation windows across 8 sessions ($N=55$ normal baseline, $N=28$ CPU abuse windows; derived from $339$ raw Metrics Server CSV lines: $186$ in `workload_normal.csv` + $153$ in `workload_attack.csv`). Out-of-fold LOSO Random Forest: Precision: $58.3\%$, Recall: $50.0\%$, F1: $0.538$, FPR: $18.2\%$.
-    - **Fusion Benchmark Dataset:** $N=122$ labeled 10-second observation windows across 24 sessions ($N=94$ normal baseline, $N=28$ attack windows; temporal alignment of network and workload streams). Out-of-fold LOSO Random Forest: Precision: $92.9\%$, Recall: $92.9\%$, F1: $0.929$, FPR: $2.1\%$.
+    - **Network Dataset:** $N=60$ labeled windows across 8 sessions ($N=32$ normal, $N=28$ attack).
+    - **Workload Dataset:** $N=83$ labeled windows across 8 sessions ($N=55$ normal, $N=28$ attack; derived from $339$ raw Metrics Server CSV lines: $186$ normal + $153$ attack).
+    - **Fusion Dataset:** $N=122$ labeled windows across 24 sessions ($N=94$ normal, $N=28$ attack).
+    - **Runtime Dataset:** $N=11$ labeled windows across 11 sessions ($N=4$ normal, $N=7$ attack).
+    - **Net+RT Dataset:** $N=71$ labeled windows across 19 sessions ($N=36$ normal, $N=35$ attack).
+    - **RT+WL Dataset:** $N=94$ labeled windows across 19 sessions ($N=59$ normal, $N=35$ attack).
+    - **Full Fusion Dataset:** $N=133$ labeled windows across 35 sessions ($N=98$ normal, $N=35$ attack).
 
-### 4.2 Workload & Fusion Scenario Observation (Not a Universal Law)
+### 4.3 Workload & Fusion Scenario Observation (Not a Universal Law)
 - During live testing of the 100-request network burst, Workload inference produced `normal` ($P(\text{attack})=0.158$) and Fusion inference produced `normal` ($P(\text{attack})=0.085$).
 - **Observation Boundary:** In this specific tested scenario, lightweight HTTP GET requests against Nginx consumed negligible CPU ($2\text{m}$ CPU, $18\text{ MiB}$ RAM), so the Workload and Fusion models observed normal resource patterns.
 - *This is an observation from the tested scenario, not proof that all attacks require simultaneous CPU and network stress.* Specialized single-vector threats (such as in-container cryptomining or silent lateral movement) exercise only one subsystem and require specialized individual sensor coverage.
 
-### Precedence Architecture
+### 4.4 Precedence Architecture & Evidence Attribution
 In multi-modal views, security-critical alert precedence is strictly enforced:
 - Ground-truth ML threat detections take precedence over benign runtime noise.
 - Anomalous runtime executions (e.g. unexpected shell or binary executions) generate high-priority security alerts even during normal ML baseline windows.

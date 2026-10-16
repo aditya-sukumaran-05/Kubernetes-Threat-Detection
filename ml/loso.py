@@ -7,7 +7,7 @@ import csv
 import json
 from pathlib import Path
 from time import perf_counter
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score
@@ -237,16 +237,30 @@ def run_loso_for_config(
     return modality_report
 
 
-def run_all_loso(project_root: Path) -> dict[str, Any]:
-    """Run LOSO cross-validation for network, workload, and fusion modalities."""
+ALL_MODALITIES: tuple[str, ...] = (
+    "network",
+    "workload",
+    "fusion",
+    "runtime",
+    "net_rt",
+    "rt_wl",
+    "full_fusion",
+)
+
+
+def run_all_loso(
+    project_root: Path, modalities: Sequence[str] | None = None
+) -> dict[str, Any]:
+    """Run LOSO cross-validation across all supported telemetry modalities."""
     results_dir = project_root / "results"
     loso_dir = results_dir / "loso"
     loso_dir.mkdir(parents=True, exist_ok=True)
 
     all_summaries: list[dict[str, Any]] = []
     modality_reports: dict[str, Any] = {}
+    target_modalities = tuple(modalities) if modalities is not None else ALL_MODALITIES
 
-    for name in ("network", "workload", "fusion"):
+    for name in target_modalities:
         config = load_config(project_root / "configs" / f"{name}.json")
         report = run_loso_for_config(config, project_root, loso_dir)
         modality_reports[name] = report

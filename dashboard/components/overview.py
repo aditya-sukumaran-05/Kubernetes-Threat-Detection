@@ -167,7 +167,14 @@ def render_overview(
         #    a historical tie-break predicts attack. To preserve top-level incident KPI integrity
         #    without arbitrary thresholds, an uncorroborated workload-only inference is only counted
         #    as an active ML attack if non-zero CPU activity (mean CPU > 0.0) was observed.
-        inf = r.fusion_inferences.get(selected_model) or r.network_inferences.get(selected_model)
+        inf = (
+            r.full_fusion_inferences.get(selected_model)
+            or r.fusion_inferences.get(selected_model)
+            or r.net_rt_inferences.get(selected_model)
+            or r.rt_wl_inferences.get(selected_model)
+            or r.network_inferences.get(selected_model)
+            or r.runtime_inferences.get(selected_model)
+        )
         wl_inf = r.workload_inferences.get(selected_model)
         wl_cpu = r.workload_features.get("workload_cpu_millicores_mean", 0.0) if r.workload_features else 0.0
 
