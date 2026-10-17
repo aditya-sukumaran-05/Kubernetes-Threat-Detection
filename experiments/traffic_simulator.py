@@ -27,6 +27,13 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from experiments.orchestration import utc_now
+from experiments.run_experiment import cpu_attack_command, stop_cpu_attack
+from telemetry.client_telemetry import (
+    ClientRequestRecord,
+    ClientSessionManifest,
+    ClientTelemetryLogger,
+    get_client_utc_now,
+)
 from telemetry.security import validate_k8s_name, validate_safe_output_path
 
 logger = logging.getLogger("experiments.traffic_simulator")
@@ -141,6 +148,7 @@ def run_benign_daemon_loop(
             pass
 
     daemon_log_file = Path("telemetry/data/benign_traffic.log")
+    client_logger = ClientTelemetryLogger()
     try:
         while True:
             try:
@@ -152,6 +160,22 @@ def run_benign_daemon_loop(
                     failed += 1
 
                 _update_status(lat, err)
+
+                # Record structured client-side request telemetry
+                rec = ClientRequestRecord(
+                    experiment_id="benign_traffic",
+                    session_id="benign_daemon",
+                    request_id=f"req_{total}_{int(time.time() * 1000)}",
+                    client_timestamp_utc=get_client_utc_now(),
+                    target_service=target_service,
+                    method="GET",
+                    status_code=200 if ok else 0,
+                    duration_ms=round(lat, 2),
+                    success=ok,
+                    error_category="none" if ok else ("timeout" if "timeout" in err.lower() else "network_error"),
+                    scenario_label="benign_baseline",
+                )
+                client_logger.record_request(rec)
             except Exception as req_exc:
                 failed += 1
                 _update_status(0.0, str(req_exc))
@@ -392,6 +416,25 @@ def execute_network_burst_scenario(
         session.errors.append(str(exc))
 
     (session_dir / "metadata.json").write_text(json.dumps(session.to_dict(), indent=2), encoding="utf-8")
+
+    manifest = ClientSessionManifest(
+        session_id=session_id,
+        experiment_id="client_network_burst",
+        scenario="network_burst",
+        target_service=target_service,
+        client_pod=client_pod,
+        status=session.status,
+        start_time_utc=start_utc,
+        end_time_utc=session.end_time_utc,
+        duration_seconds=session.duration_seconds,
+        requests_attempted=requests,
+        requests_completed=session.requests_completed,
+        requests_failed=session.requests_failed,
+        response_code_distribution={"200": session.requests_completed, "0": session.requests_failed},
+        errors=session.errors,
+        metadata={"target_service": target_service},
+    )
+    ClientTelemetryLogger().save_session_manifest(manifest)
     return session
 
 
@@ -440,6 +483,23 @@ def execute_runtime_anomaly_scenario(
     session.status = "completed" if completed == len(commands) else ("partial" if completed > 0 else "failed")
 
     (session_dir / "metadata.json").write_text(json.dumps(session.to_dict(), indent=2), encoding="utf-8")
+
+    manifest = ClientSessionManifest(
+        session_id=session_id,
+        experiment_id="client_runtime_anomaly",
+        scenario="runtime_anomaly",
+        target_service="in-container-exec",
+        client_pod=target_workload,
+        status=session.status,
+        start_time_utc=start_utc,
+        end_time_utc=session.end_time_utc,
+        duration_seconds=session.duration_seconds,
+        commands_attempted=len(commands),
+        commands_completed=session.commands_completed,
+        errors=session.errors,
+        metadata={"commands": list(commands), "target_workload": target_workload},
+    )
+    ClientTelemetryLogger().save_session_manifest(manifest)
     return session
 
 
@@ -521,7 +581,133 @@ def execute_concurrent_attack_scenario(
     session.status = "completed" if (completed_reqs > 0 and completed_cmds > 0) else "partial"
 
     (session_dir / "metadata.json").write_text(json.dumps(session.to_dict(), indent=2), encoding="utf-8")
+
+    manifest = ClientSessionManifest(
+        session_id=session_id,
+        experiment_id="client_concurrent_attack",
+        scenario="concurrent_attack",
+        target_service=target_service,
+        client_pod=session.client_pod,
+        status=session.status,
+        start_time_utc=start_utc,
+        end_time_utc=session.end_time_utc,
+        duration_seconds=session.duration_seconds,
+        requests_attempted=burst_requests,
+        requests_completed=session.requests_completed,
+        requests_failed=session.requests_failed,
+        commands_attempted=len(commands),
+        commands_completed=session.commands_completed,
+        response_code_distribution={"200": session.requests_completed, "0": session.requests_failed},
+        errors=session.errors,
+        metadata={"commands": list(commands), "burst_requests": burst_requests},
+    )
+    ClientTelemetryLogger().save_session_manifest(manifest)
     return session
+
+
+def execute_cpu_stress_scenario(
+    duration_seconds: float = 10.0,
+    target_workload: str = DEFAULT_WORKLOAD_POD,
+    namespace: str = DEFAULT_NAMESPACE,
+) -> SimulationSession:
+    """Launch controlled in-pod workload/CPU stress on webapp using marked PID loop.
+
+    Safety constraints:
+    - Target is strictly deployment/webapp (never touches cpu-test).
+    - Duration is clamped between 1.0s and 30.0s.
+    - Uses approved marked PID file (/tmp/kubernetes-threat-detection-cpu-attack.pid).
+    - Cleanup verifies the process cmdline before killing and removes the PID marker.
+    """
+    if "cpu-test" in target_workload.lower():
+        raise ValueError("Safety violation: Targeting cpu-test is strictly prohibited.")
+
+    duration_seconds = max(1.0, min(float(duration_seconds), 30.0))
+    session_id = f"cpu_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    session_dir = SIMULATION_RUNS_DIR / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    start_utc = get_current_utc_str()
+    session = SimulationSession(
+        session_id=session_id,
+        scenario="cpu_stress",
+        target_service="in-container-cpu",
+        client_pod=target_workload,
+        status="running",
+        start_time_utc=start_utc,
+        metadata={"target_workload": target_workload, "duration_requested": duration_seconds},
+    )
+
+    cluster_dict = {"namespace": namespace, "target_workload": target_workload}
+    cmd = cpu_attack_command(cluster_dict)
+    t0 = time.perf_counter()
+    proc = None
+    errors: list[str] = []
+
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        time.sleep(duration_seconds)
+    except Exception as exc:
+        errors.append(f"Failed to launch CPU stress: {exc}")
+    finally:
+        stop_err = stop_cpu_attack(cluster_dict)
+        if stop_err:
+            errors.append(stop_err)
+        if proc and proc.poll() is None:
+            if sys.platform == "win32":
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, check=False)
+            else:
+                proc.kill()
+                proc.wait(timeout=3)
+
+    dur = round(time.perf_counter() - t0, 2)
+    session.duration_seconds = dur
+    session.end_time_utc = get_current_utc_str()
+    session.errors = errors
+    session.status = "completed" if not errors else "partial"
+
+    (session_dir / "metadata.json").write_text(json.dumps(session.to_dict(), indent=2), encoding="utf-8")
+
+    manifest = ClientSessionManifest(
+        session_id=session_id,
+        experiment_id="client_cpu_stress",
+        scenario="cpu_stress",
+        target_service="in-container-cpu",
+        client_pod=target_workload,
+        status=session.status,
+        start_time_utc=start_utc,
+        end_time_utc=session.end_time_utc,
+        duration_seconds=dur,
+        commands_attempted=1,
+        commands_completed=1 if session.status == "completed" else 0,
+        errors=errors,
+        metadata={"target_workload": target_workload},
+    )
+    ClientTelemetryLogger().save_session_manifest(manifest)
+    return session
+
+
+def cancel_all_active_traffic() -> dict[str, Any]:
+    """Emergency cancel control: stops benign traffic and cleans up in-container CPU stress."""
+    benign_res = stop_benign_traffic()
+    cpu_err = stop_cpu_attack({"namespace": DEFAULT_NAMESPACE, "target_workload": DEFAULT_WORKLOAD_POD})
+
+    client_logger = ClientTelemetryLogger()
+    cancelled_sessions: list[str] = []
+    for manifest in client_logger.list_sessions(limit=10):
+        if manifest.status == "running":
+            manifest.status = "cancelled"
+            manifest.end_time_utc = get_current_utc_str()
+            manifest.errors.append("Session aborted by operator emergency cancellation.")
+            client_logger.save_session_manifest(manifest)
+            cancelled_sessions.append(manifest.session_id)
+
+    return {
+        "status": "cancelled",
+        "benign_traffic": benign_res,
+        "cpu_cleanup": "ok" if not cpu_err else cpu_err,
+        "cancelled_sessions": cancelled_sessions,
+        "timestamp_utc": get_current_utc_str(),
+    }
 
 
 def main() -> None:
@@ -550,11 +736,20 @@ def main() -> None:
     p_daemon.add_argument("--interval", type=float, default=2.0)
     p_daemon.add_argument("--jitter", type=float, default=0.8)
 
+    # cpu-stress
+    p_cpu = subparsers.add_parser("cpu-stress", help="Execute controlled in-pod CPU stress on webapp")
+    p_cpu.add_argument("--duration", type=float, default=10.0)
+    p_cpu.add_argument("--target-workload", default=DEFAULT_WORKLOAD_POD)
+    p_cpu.add_argument("--namespace", default=DEFAULT_NAMESPACE)
+
+    # cancel
+    subparsers.add_parser("cancel", help="Emergency stop all active simulation traffic and clean up CPU stress")
+
     # run-attack
     p_attack = subparsers.add_parser("run-attack", help="Execute an on-demand attack scenario")
     p_attack.add_argument(
         "--scenario",
-        choices=["network_burst", "runtime_anomaly", "concurrent_attack"],
+        choices=["network_burst", "runtime_anomaly", "concurrent_attack", "cpu_stress"],
         required=True,
     )
     p_attack.add_argument("--requests", type=int, default=50)
@@ -589,6 +784,18 @@ def main() -> None:
             jitter=args.jitter,
         )
 
+    elif args.command == "cpu-stress":
+        session = execute_cpu_stress_scenario(
+            duration_seconds=args.duration,
+            target_workload=args.target_workload,
+            namespace=args.namespace,
+        )
+        print(json.dumps(session.to_dict(), indent=2))
+
+    elif args.command == "cancel":
+        res = cancel_all_active_traffic()
+        print(json.dumps(res, indent=2))
+
     elif args.command == "run-attack":
         if args.scenario == "network_burst":
             session = execute_network_burst_scenario(requests=args.requests, duration_seconds=args.duration)
@@ -596,6 +803,8 @@ def main() -> None:
             session = execute_runtime_anomaly_scenario()
         elif args.scenario == "concurrent_attack":
             session = execute_concurrent_attack_scenario(burst_requests=args.requests, duration_seconds=args.duration)
+        elif args.scenario == "cpu_stress":
+            session = execute_cpu_stress_scenario(duration_seconds=args.duration)
         print(json.dumps(session.to_dict(), indent=2))
 
 

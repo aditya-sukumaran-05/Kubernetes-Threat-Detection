@@ -11,7 +11,8 @@
 
 | Component | Port / Path | Purpose |
 |:---|:---|:---|
-| **Streamlit SOC Dashboard** | `http://localhost:8501` | Primary evaluation interface |
+| **Client Attack Simulation Console** | `http://localhost:8502` | Client-facing traffic generation, red-team attack injection, & correlation inspector |
+| **Streamlit SOC Threat Detection Dashboard** | `http://localhost:8501` | Defense-side monitoring, feature aggregation, & ML threat detection interface |
 | **Minikube Cluster** | `127.0.0.1:8443` | Local single-node Kubernetes cluster (v1.37.0) |
 | **Target Workload** | `deployment/webapp` (Port 80) | Target containerized web application |
 | **Traffic Generator Pod** | `pod/traffic-simulator` | Dedicated in-cluster client for benign & attack traffic |
@@ -31,15 +32,14 @@ kubectl get pods -n default
 # Expected:
 # webapp-xxx          Running
 # traffic-simulator   Running
-# cpu-test            Running (Do not touch)
+# cpu-test            Running (Do not touch - independent background workload)
 
-# 2. Verify Dashboard is Live
-# Open browser to: http://localhost:8501
-```
+# 2. Launch Dual-Console Setup (Two PowerShell Windows or Background)
+# Defense-Side SOC Dashboard (Port 8501):
+python -m streamlit run dashboard/app.py --server.port 8501
 
-If the dashboard is not currently running, launch it with:
-```powershell
-python -m streamlit run dashboard/app.py
+# Client-Side Attack Simulation Console (Port 8502):
+python -m streamlit run client_console/app.py --server.port 8502
 ```
 
 If the collectors need to be checked:
@@ -160,13 +160,17 @@ Get-Process python | Select-Object Id, ProcessName
 
 | Issue | Quick Fix Command (PowerShell) |
 |:---|:---|
-| **Dashboard stops or browser tab freezes** | `python -m streamlit run dashboard/app.py` |
+| **SOC Dashboard stops or freezes** | `python -m streamlit run dashboard/app.py --server.port 8501` |
+| **Launch Client Attack Console** | `python -m streamlit run client_console/app.py --server.port 8502` |
 | **Check benign traffic status from CLI** | `python -m experiments.traffic_simulator status` |
 | **Stop benign traffic from CLI** | `python -m experiments.traffic_simulator stop-benign` |
+| **Emergency cancel all traffic & stress** | `python -m experiments.traffic_simulator cancel` |
 | **Trigger network burst from CLI** | `python -m experiments.traffic_simulator run-attack --scenario network_burst --requests 100` |
+| **Trigger CPU stress from CLI** | `python -m experiments.traffic_simulator cpu-stress --duration 10.0` |
 | **Trigger runtime introspection from CLI** | `python -m experiments.traffic_simulator run-attack --scenario runtime_anomaly` |
 | **Trigger concurrent attack from CLI** | `python -m experiments.traffic_simulator run-attack --scenario concurrent_attack` |
-| **Run regression test suite** | `pytest tests/test_dashboard.py tests/test_features.py -v` |
+| **Run client console tests** | `pytest tests/test_client_console.py -v` |
+| **Run full regression test suite** | `pytest tests/test_client_console.py tests/test_dashboard.py tests/test_features.py -v` |
 
 ---
 
