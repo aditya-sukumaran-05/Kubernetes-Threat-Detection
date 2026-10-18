@@ -44,6 +44,16 @@ NAV_ALERTS = "Alert History & Telemetry Health"
 NAV_REPLAY = "Historical Replay & Testing"
 
 
+@st.cache_resource
+def get_threat_detector(project_root_str: str) -> ThreatDetector:
+    return ThreatDetector(project_root=Path(project_root_str))
+
+
+@st.cache_resource
+def get_dataset_provider() -> CapturedDatasetProvider:
+    return CapturedDatasetProvider()
+
+
 def build_app() -> None:
     """Build and render the Streamlit threat detection dashboard."""
     st.set_page_config(
@@ -57,8 +67,8 @@ def build_app() -> None:
     apply_soc_styles()
 
     # Initialize Backend Services
-    detector = ThreatDetector(project_root=PROJECT_ROOT)
-    provider = CapturedDatasetProvider()
+    detector = get_threat_detector(str(PROJECT_ROOT))
+    provider = get_dataset_provider()
 
     # 2. Sentinel Sidebar
     render_brand_sidebar()

@@ -24,6 +24,7 @@ DEFAULT_MAX_RETRIES = 3
 DEFAULT_BASE_BACKOFF = 0.5
 DEFAULT_MAX_BACKOFF = 2.0
 DEFAULT_JITTER = 0.2
+SUBPROCESS_WINDOW_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if sys.platform == "win32" else 0
 
 
 class MetricsCollectionError(RuntimeError):
@@ -64,6 +65,7 @@ def get_webapp_pod(
                 capture_output=True,
                 text=True,
                 check=True,
+                creationflags=SUBPROCESS_WINDOW_FLAGS,
             )
             pod_name = result.stdout.strip()
             if not pod_name:
@@ -117,6 +119,7 @@ def get_metrics(
                 capture_output=True,
                 text=True,
                 check=True,
+                creationflags=SUBPROCESS_WINDOW_FLAGS,
             )
             parts = result.stdout.strip().split()
             if len(parts) < 3:

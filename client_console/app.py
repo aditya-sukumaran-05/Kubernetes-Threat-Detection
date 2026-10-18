@@ -27,6 +27,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+import importlib
+import experiments.traffic_simulator
+
+try:
+    importlib.reload(experiments.traffic_simulator)
+except Exception:
+    pass
+
 from experiments.correlation import correlate_client_session
 from experiments.traffic_simulator import (
     DEFAULT_CLIENT_POD,
@@ -35,10 +43,15 @@ from experiments.traffic_simulator import (
     DEFAULT_WORKLOAD_POD,
     cancel_all_active_traffic,
     check_pod_running,
+    execute_benign_baseline_scenario,
     execute_concurrent_attack_scenario,
     execute_cpu_stress_scenario,
     execute_network_burst_scenario,
+    execute_recovery_observation_scenario,
     execute_runtime_anomaly_scenario,
+    execute_runtime_benign_scenario,
+    execute_sequential_multimodal_scenario,
+    execute_slow_vs_burst_scenario,
     get_benign_traffic_status,
     is_benign_traffic_running,
     start_benign_traffic,
@@ -64,31 +77,31 @@ st.markdown(
     """
     <style>
     .main-title {
-        font-size: 2.2rem;
+        font-size: 2.1rem;
         font-weight: 800;
         color: #e2e8f0;
         margin-bottom: 0.2rem;
     }
     .sub-title {
-        font-size: 1.05rem;
+        font-size: 1.0rem;
         color: #94a3b8;
-        margin-bottom: 1.2rem;
+        margin-bottom: 1.0rem;
     }
     .ground-truth-banner {
         background-color: #1e293b;
         border-left: 5px solid #38bdf8;
-        padding: 12px 18px;
+        padding: 12px 16px;
         border-radius: 6px;
-        margin-bottom: 20px;
+        margin-bottom: 18px;
         color: #cbd5e1;
-        font-size: 0.95rem;
+        font-size: 0.92rem;
     }
     .status-card {
         background-color: #0f172a;
         border: 1px solid #334155;
         border-radius: 8px;
-        padding: 16px;
-        margin-bottom: 15px;
+        padding: 14px;
+        margin-bottom: 12px;
     }
     .badge-running {
         background-color: #166534;
@@ -96,7 +109,7 @@ st.markdown(
         padding: 3px 8px;
         border-radius: 4px;
         font-weight: 600;
-        font-size: 0.85rem;
+        font-size: 0.82rem;
     }
     .badge-stopped {
         background-color: #374151;
@@ -104,7 +117,7 @@ st.markdown(
         padding: 3px 8px;
         border-radius: 4px;
         font-weight: 600;
-        font-size: 0.85rem;
+        font-size: 0.82rem;
     }
     .badge-attack {
         background-color: #991b1b;
@@ -112,22 +125,39 @@ st.markdown(
         padding: 3px 8px;
         border-radius: 4px;
         font-weight: 600;
-        font-size: 0.85rem;
+        font-size: 0.82rem;
     }
-    .badge-safe {
+    .badge-temporal {
+        background-color: #854d0e;
+        color: #fef08a;
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-weight: 600;
+        font-size: 0.82rem;
+    }
+    .badge-multimodal {
+        background-color: #581c87;
+        color: #e9d5ff;
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-weight: 600;
+        font-size: 0.82rem;
+    }
+    .badge-benign {
         background-color: #1e3a8a;
         color: #bfdbfe;
         padding: 3px 8px;
         border-radius: 4px;
         font-weight: 600;
-        font-size: 0.85rem;
+        font-size: 0.82rem;
     }
     .scenario-card {
         background-color: #1e1e2e;
         border: 1px solid #3b4261;
         border-radius: 8px;
-        padding: 16px;
-        height: 100%;
+        padding: 14px;
+        margin-bottom: 12px;
+        min-height: 280px;
     }
     .soc-guide-box {
         background-color: #0f2338;
@@ -140,6 +170,12 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+
+@st.cache_data(ttl=10.0)
+def cached_check_pod_running(pod_name: str, namespace: str) -> bool:
+    """Cache kubectl pod running check for 10 seconds to avoid UI latency."""
+    return check_pod_running(pod_name, namespace)
 
 
 def init_session_state() -> None:
@@ -176,9 +212,7 @@ def render_header() -> None:
 def render_target_status() -> None:
     st.subheader("📡 Cluster Infrastructure & Target Health")
 
-    client_pod_healthy = check_pod_running(DEFAULT_CLIENT_POD, DEFAULT_NAMESPACE)
-    benign_status = get_benign_traffic_status()
-    benign_running = benign_status.get("is_process_alive", False)
+    client_pod_healthy = cached_check_pod_running(DEFAULT_CLIENT_POD, DEFAULT_NAMESPACE)
 
     col1, col2, col3, col4 = st.columns(4)
 
@@ -229,7 +263,7 @@ def render_emergency_controls() -> None:
 
 
 def render_benign_traffic_panel() -> None:
-    st.subheader("🔄 Automated Benign Traffic Generation")
+    st.markdown("#### 🔄 Continuous Benign Traffic Daemon")
     benign_status = get_benign_traffic_status()
     running = benign_status.get("is_process_alive", False)
 
@@ -243,17 +277,17 @@ def render_benign_traffic_panel() -> None:
         if running:
             st.caption(f"Process PID: `{benign_status.get('pid', 'N/A')}` | Started: `{benign_status.get('started_at_utc', 'N/A')[:19]}`")
 
-        interval = st.slider("Base Interval (seconds)", min_value=1.0, max_value=8.0, value=2.0, step=0.5)
-        jitter = st.slider("Interval Jitter (± seconds)", min_value=0.0, max_value=2.0, value=0.8, step=0.1)
+        interval = st.slider("Base Interval (seconds)", min_value=1.0, max_value=8.0, value=2.0, step=0.5, key="daemon_interval")
+        jitter = st.slider("Interval Jitter (± seconds)", min_value=0.0, max_value=2.0, value=0.8, step=0.1, key="daemon_jitter")
 
         b_col1, b_col2 = st.columns(2)
         with b_col1:
-            if st.button("▶️ Start Benign", disabled=running, use_container_width=True):
+            if st.button("▶️ Start Daemon", disabled=running, use_container_width=True):
                 res = start_benign_traffic(base_interval=interval, jitter=jitter)
                 st.session_state.last_action_message = f"Started benign traffic generator (PID {res.get('pid')})"
                 st.rerun()
         with b_col2:
-            if st.button("⏹️ Stop Benign", disabled=not running, use_container_width=True):
+            if st.button("⏹️ Stop Daemon", disabled=not running, use_container_width=True):
                 res = stop_benign_traffic()
                 st.session_state.last_action_message = "Stopped benign traffic generator."
                 st.rerun()
@@ -280,14 +314,50 @@ def render_benign_traffic_panel() -> None:
             f"Last measured latency: `{benign_status.get('last_latency_ms', 0.0)} ms`."
         )
 
-    st.divider()
+
+def render_benign_baseline_panel() -> None:
+    st.markdown("#### 🟢 Bounded Benign Baseline Session")
+    st.caption("Executes a bounded, one-shot sequence of normal HTTP GET requests with natural timing jitter to record a clean baseline manifest.")
+
+    bcol1, bcol2, bcol3 = st.columns([1, 1, 1])
+    with bcol1:
+        base_dur = st.slider("Session Duration (s)", min_value=10.0, max_value=60.0, value=20.0, step=5.0, key="base_dur")
+    with bcol2:
+        base_int = st.slider("Interval (s)", min_value=1.0, max_value=4.0, value=2.0, step=0.5, key="base_int")
+    with bcol3:
+        st.write("")
+        st.write("")
+        if st.button("▶️ Launch Benign Baseline Session", use_container_width=True):
+            with st.spinner(f"Running bounded benign baseline for {base_dur}s..."):
+                session = execute_benign_baseline_scenario(duration_seconds=base_dur, base_interval=base_int)
+                st.session_state.active_scenario_result = session.to_dict()
+                st.session_state.last_action_message = f"Benign baseline session completed: {session.requests_completed} requests in {session.duration_seconds}s"
+                st.rerun()
+
+
+def render_runtime_benign_panel() -> None:
+    st.markdown("#### 🛡️ Benign Container Runtime Healthchecks")
+    st.caption("Executes harmless administrative/diagnostic commands (`date -u`, `uptime`, `cat /etc/os-release`, `echo healthcheck`) to verify non-adversarial runtime activity.")
+
+    rcol1, rcol2 = st.columns([2, 1])
+    with rcol1:
+        st.code("date -u && uptime && cat /etc/os-release && echo healthcheck", language="bash")
+    with rcol2:
+        delay = st.slider("Command Delay (s)", min_value=0.2, max_value=2.0, value=0.5, step=0.1, key="rt_benign_delay")
+        if st.button("🔍 Execute Benign Runtime Checks", use_container_width=True):
+            with st.spinner("Executing non-adversarial administrative commands in webapp..."):
+                session = execute_runtime_benign_scenario(delay_seconds=delay)
+                st.session_state.active_scenario_result = session.to_dict()
+                st.session_state.last_action_message = f"Benign runtime checks completed: {session.commands_completed} commands executed."
+                st.rerun()
 
 
 def render_attack_scenarios() -> None:
     st.subheader("⚡ Manual Attack Scenario Injection (Red-Team Controls)")
     st.caption("Each scenario simulates a bounded threat condition with safe duration limits and operator confirmation.")
 
-    sc1, sc2, sc3, sc4 = st.columns(4)
+    st.markdown("##### 1. Single-Modality Threat Scenarios")
+    sc1, sc2, sc3 = st.columns(3)
 
     # 1. HTTP Network Burst Flood
     with sc1:
@@ -336,17 +406,74 @@ def render_attack_scenarios() -> None:
                 st.session_state.last_action_message = f"Runtime introspection finished: {session.commands_completed} commands executed."
                 st.rerun()
 
-    # 4. Concurrent Multimodal Attack
-    with sc4:
+    st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+    st.markdown("##### 2. Advanced & Temporal Evaluation Scenarios")
+    tcol1, tcol2 = st.columns(2)
+
+    # 4. Slow-vs-Burst Comparison
+    with tcol1:
+        st.markdown("#### ⏱️ Slow-vs-Burst Comparison")
+        st.markdown("<span class='badge-temporal'>Two-Phase Rate Anomaly</span>", unsafe_allow_html=True)
+        st.write("Demonstrates how connection rate differentiates low-rate spaced requests from a sudden high-rate burst in a single session.")
+        c_reqs = st.slider("Burst Requests in Phase 2", min_value=10, max_value=60, value=30, step=10, key="svb_reqs")
+        c_dur = st.slider("Burst Duration (s)", min_value=3.0, max_value=12.0, value=6.0, step=1.0, key="svb_dur")
+        svb_confirm = st.checkbox("Confirm Slow-vs-Burst Scenario", key="svb_conf")
+
+        if st.button("⏱️ Launch Slow-vs-Burst", disabled=not svb_confirm, use_container_width=True):
+            with st.spinner("Executing Phase 1 (slow) followed by Phase 2 (burst)..."):
+                session = execute_slow_vs_burst_scenario(slow_requests=5, burst_requests=c_reqs, burst_duration=c_dur)
+                st.session_state.active_scenario_result = session.to_dict()
+                st.session_state.last_action_message = f"Slow-vs-burst finished: {session.requests_completed} reqs in {session.duration_seconds}s"
+                st.rerun()
+
+    # 5. Recovery Observation
+    with tcol2:
+        st.markdown("#### 📈 Recovery Observation")
+        st.markdown("<span class='badge-temporal'>Tripartite Cooldown Evaluation</span>", unsafe_allow_html=True)
+        st.write("Observes detection behavior across three phases: Pre-Attack Baseline → Burst Attack → Post-Attack Cooldown Recovery.")
+        rec_reqs = st.slider("Attack Burst Requests", min_value=10, max_value=50, value=30, step=10, key="rec_reqs")
+        rec_dur = st.slider("Burst Duration (s)", min_value=3.0, max_value=10.0, value=6.0, step=1.0, key="rec_dur")
+        rec_confirm = st.checkbox("Confirm Recovery Scenario", key="rec_conf")
+
+        if st.button("📈 Launch Recovery Observation", disabled=not rec_confirm, use_container_width=True):
+            with st.spinner("Executing tripartite recovery scenario (Baseline → Burst → Cooldown)..."):
+                session = execute_recovery_observation_scenario(burst_requests=rec_reqs, burst_duration=rec_dur)
+                st.session_state.active_scenario_result = session.to_dict()
+                st.session_state.last_action_message = f"Recovery scenario finished: {session.requests_completed} reqs in {session.duration_seconds}s"
+                st.rerun()
+
+    st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+    st.markdown("##### 3. Heterogeneous Multimodal Threat Scenarios")
+    mcol1, mcol2 = st.columns(2)
+
+    # 6. Sequential Multimodal Attack
+    with mcol1:
+        st.markdown("#### 🔄 Sequential Multimodal Attack")
+        st.markdown("<span class='badge-multimodal'>Multi-Stage Killchain</span>", unsafe_allow_html=True)
+        st.write("Executes a 3-stage intrusion killchain: Phase 1 (Burst flood) → Phase 2 (Runtime reconnaissance) → Phase 3 (CPU stress).")
+        seq_reqs = st.slider("Phase 1 Burst Requests", min_value=15, max_value=50, value=30, step=5, key="seq_reqs")
+        seq_cpu = st.slider("Phase 3 CPU Stress (s)", min_value=3.0, max_value=12.0, value=6.0, step=1.0, key="seq_cpu")
+        seq_confirm = st.checkbox("Confirm Sequential Attack", key="seq_conf")
+
+        if st.button("🔄 Launch Sequential Attack", disabled=not seq_confirm, use_container_width=True):
+            with st.spinner("Executing sequential 3-stage killchain (Burst → Recon → CPU Stress)..."):
+                session = execute_sequential_multimodal_scenario(burst_requests=seq_reqs, cpu_duration=seq_cpu)
+                st.session_state.active_scenario_result = session.to_dict()
+                st.session_state.last_action_message = f"Sequential attack completed in {session.duration_seconds}s"
+                st.rerun()
+
+    # 7. Concurrent Multimodal Attack
+    with mcol2:
         st.markdown("#### 🔥 Concurrent Multimodal Attack")
-        st.markdown("<span class='badge-attack'>Full Fusion Scenario</span>", unsafe_allow_html=True)
-        st.write("Simultaneously generates network burst flood and in-container process executions.")
-        st.caption("Triggers Precedence Rule 1 in SOC Tri-Modal Fusion.")
+        st.markdown("<span class='badge-multimodal'>Full Tri-Modal Fusion</span>", unsafe_allow_html=True)
+        st.write("Simultaneously generates network burst flood and in-container process executions to trigger tri-modal fusion precedence.")
+        con_reqs = st.slider("Concurrent Requests", min_value=20, max_value=60, value=40, step=10, key="con_reqs")
+        con_dur = st.slider("Duration (s)", min_value=4.0, max_value=12.0, value=8.0, step=1.0, key="con_dur")
         con_confirm = st.checkbox("Confirm Concurrent Attack", key="con_conf")
 
         if st.button("🔥 Launch Multimodal Attack", disabled=not con_confirm, use_container_width=True):
             with st.spinner("Executing concurrent burst and container exec..."):
-                session = execute_concurrent_attack_scenario(burst_requests=40, duration_seconds=8.0)
+                session = execute_concurrent_attack_scenario(burst_requests=con_reqs, duration_seconds=con_dur)
                 st.session_state.active_scenario_result = session.to_dict()
                 st.session_state.last_action_message = f"Concurrent attack finished: {session.requests_completed} reqs, {session.commands_completed} cmds."
                 st.rerun()
@@ -453,16 +580,20 @@ def render_live_request_feed() -> None:
         st.info("No client request logs found in telemetry/data/client/requests.jsonl yet.")
         return
 
-    # Read last 25 lines efficiently
+    # Efficient tail read (seeking to last 64 KB to avoid scanning full file)
     records: list[dict[str, Any]] = []
     try:
-        with open(requests_path, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
-            for line in lines[-25:]:
-                line = line.strip()
-                if line and line.startswith("{"):
+        size = requests_path.stat().st_size
+        with open(requests_path, "rb") as f:
+            if size > 65536:
+                f.seek(size - 65536)
+                f.readline()  # discard partial line
+            raw_lines = f.read().decode("utf-8", errors="replace").splitlines()
+            for line in raw_lines[-30:]:
+                line_str = line.strip()
+                if line_str and line_str.startswith("{"):
                     try:
-                        records.append(json.loads(line))
+                        records.append(json.loads(line_str))
                     except Exception:
                         continue
     except Exception as exc:
@@ -513,8 +644,20 @@ def main() -> None:
     ])
 
     with tab_sim:
-        render_benign_traffic_panel()
-        render_attack_scenarios()
+        ctrl_mode = st.radio(
+            "Select Control Mode:",
+            options=["🟢 Normal Traffic & Baseline Controls", "⚡ Attack Injection Scenarios (Red-Team)"],
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+        if "Normal Traffic" in ctrl_mode:
+            render_benign_traffic_panel()
+            st.markdown("<div style='height: 15px;'></div>", unsafe_allow_html=True)
+            render_benign_baseline_panel()
+            st.markdown("<div style='height: 15px;'></div>", unsafe_allow_html=True)
+            render_runtime_benign_panel()
+        else:
+            render_attack_scenarios()
 
     with tab_history:
         render_recent_activity_and_correlation()

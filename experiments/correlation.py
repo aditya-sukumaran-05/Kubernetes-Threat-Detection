@@ -20,6 +20,13 @@ from typing import Any, Sequence
 
 from telemetry.client_telemetry import ClientSessionManifest, ClientTelemetryLogger
 
+_REPORT_CACHE: dict[str, CorrelationReport] = {}
+
+
+def clear_correlation_cache() -> None:
+    """Clear the in-memory correlation reports cache."""
+    _REPORT_CACHE.clear()
+
 
 def parse_iso_utc(ts_str: str) -> datetime:
     """Parse ISO 8601 UTC timestamp string to timezone-aware datetime."""
@@ -85,6 +92,9 @@ def correlate_client_session(
     logger: ClientTelemetryLogger | None = None,
 ) -> CorrelationReport:
     """Correlate a client session against active server telemetry records."""
+    if session_id in _REPORT_CACHE:
+        return _REPORT_CACHE[session_id]
+
     root = Path(project_root).resolve()
     client_logger = logger or ClientTelemetryLogger(root / "telemetry" / "data" / "client")
 
@@ -134,6 +144,7 @@ def correlate_client_session(
         curr += timedelta(seconds=10)
 
     win_strings = [isoformat_z(w) for w in covering_windows]
+    target_prefixes = tuple({w[:16] for w in win_strings})
 
     # Query server telemetry files
     net_path = root / "telemetry" / "data" / "network" / "network_events.jsonl"
@@ -145,14 +156,14 @@ def correlate_client_session(
     win_rt_counts: dict[str, int] = {w: 0 for w in win_strings}
     win_wl_cpus: dict[str, list[float]] = {w: [] for w in win_strings}
 
-    # 1. Inspect Server Network Events
+    # 1. Inspect Server Network Events (with target minute pre-filtering)
     if net_path.exists():
         try:
             with open(net_path, "r", encoding="utf-8", errors="replace") as f:
-                # Seek backwards if large, or read lines
                 for line in f:
-                    line = line.strip()
                     if not line or not line.startswith("{"):
+                        continue
+                    if not any(tp in line for tp in target_prefixes):
                         continue
                     try:
                         ev = json.loads(line)
@@ -168,13 +179,14 @@ def correlate_client_session(
         except Exception:
             pass
 
-    # 2. Inspect Server Runtime Events
+    # 2. Inspect Server Runtime Events (with target minute pre-filtering)
     if rt_path.exists():
         try:
             with open(rt_path, "r", encoding="utf-8", errors="replace") as f:
                 for line in f:
-                    line = line.strip()
                     if not line or not line.startswith("{"):
+                        continue
+                    if not any(tp in line for tp in target_prefixes):
                         continue
                     try:
                         ev = json.loads(line)
@@ -190,13 +202,15 @@ def correlate_client_session(
         except Exception:
             pass
 
-    # 3. Inspect Server Workload Samples
+    # 3. Inspect Server Workload Samples (with target minute pre-filtering)
     if wl_path.exists():
         try:
             with open(wl_path, "r", encoding="utf-8", errors="replace") as f:
                 reader = csv.reader(f)
                 for parts in reader:
                     if len(parts) >= 4 and not parts[0].startswith("timestamp"):
+                        if not any(tp in parts[0] for tp in target_prefixes):
+                            continue
                         try:
                             s_dt = parse_iso_utc(parts[0].strip())
                             s_win_str = isoformat_z(floor_to_10s_window(s_dt))
@@ -314,7 +328,7 @@ def correlate_client_session(
     # SOC Navigation Guidance
     soc_guide = _generate_soc_guidance(manifest, win_strings, grade)
 
-    return CorrelationReport(
+    report = CorrelationReport(
         session_id=manifest.session_id,
         scenario=manifest.scenario,
         client_status=manifest.status,
@@ -339,6 +353,9 @@ def correlate_client_session(
         soc_navigation_guide=soc_guide,
         window_details=window_details,
     )
+    if manifest.status in ("completed", "failed", "cancelled"):
+        _REPORT_CACHE[manifest.session_id] = report
+    return report
 
 
 def _generate_soc_guidance(
@@ -366,6 +383,35 @@ def _generate_soc_guidance(
                 "5. Observe connection count, event count, and model verdict.",
             ],
         }
+    if scenario == "slow_vs_burst":
+        return {
+            "recommended_page": "📡 Live Detection",
+            "recommended_modality": "2. Network Only (eBPF TCP)",
+            "target_windows": observation_windows,
+            "primary_window": primary_win,
+            "expected_signature": "Contrast between low-rate spaced requests (~0.5 conn/s) followed by abrupt burst surge.",
+            "ground_truth_note": "Client Ground Truth: Two-Phase Comparison. Phase 1 (Normal) -> Phase 2 (Attack Burst).",
+            "instructions": [
+                "1. Open SOC Dashboard at http://localhost:8501.",
+                "2. Navigate to '📡 Live Detection' in sidebar.",
+                "3. Select Modality: '2. Network Only'.",
+                "4. Compare connection rate across consecutive windows in the session horizon.",
+            ],
+        }
+    if scenario == "recovery_observation":
+        return {
+            "recommended_page": "🔍 Telemetry Explorer",
+            "recommended_modality": "1. Network + Workload [ML Benchmark]",
+            "target_windows": observation_windows,
+            "primary_window": primary_win,
+            "expected_signature": "Tripartite pattern: Normal baseline -> Transient Attack Spike -> Return to quiescent baseline.",
+            "ground_truth_note": "Client Ground Truth: Tripartite Recovery Lifecycle under unified manifest.",
+            "instructions": [
+                "1. Open SOC Dashboard at http://localhost:8501.",
+                "2. Navigate to '🔍 Telemetry Explorer' in sidebar.",
+                "3. Observe the rise and subsequent recovery return to baseline across all three series.",
+            ],
+        }
     if scenario in ("runtime_anomaly", "runtime_introspection"):
         return {
             "recommended_page": "🛡️ Runtime Events",
@@ -381,6 +427,20 @@ def _generate_soc_guidance(
                 "4. Navigate to '📡 Live Detection' (Modality: '5. Network + Runtime') to observe multimodal alert precedence.",
             ],
         }
+    if scenario == "runtime_benign":
+        return {
+            "recommended_page": "🛡️ Runtime Events",
+            "recommended_modality": "4. Runtime Only (trace_exec)",
+            "target_windows": observation_windows,
+            "primary_window": primary_win,
+            "expected_signature": "Ordinary system-query executions (date, uptime, os-release) without sensitive security flags.",
+            "ground_truth_note": "Client Ground Truth: Benign Process Activity. Demonstrates baseline system-information queries.",
+            "instructions": [
+                "1. Open SOC Dashboard at http://localhost:8501.",
+                "2. Navigate to '🛡️ Runtime Events' in sidebar.",
+                "3. Observe executed commands without security rule violations.",
+            ],
+        }
     if scenario in ("cpu_stress", "workload_stress"):
         return {
             "recommended_page": "🔍 Telemetry Explorer",
@@ -394,6 +454,21 @@ def _generate_soc_guidance(
                 "2. Navigate to '🔍 Telemetry Explorer' in sidebar.",
                 "3. Inspect CPU & Memory time-series graphs.",
                 f"4. Observe workload anomaly curve peaking around '{primary_win}'.",
+            ],
+        }
+    if scenario == "sequential_multimodal":
+        return {
+            "recommended_page": "📡 Live Detection",
+            "recommended_modality": "7. Full Tri-Modal Fusion",
+            "target_windows": observation_windows,
+            "primary_window": primary_win,
+            "expected_signature": "Multi-stage sequential progression: Network burst -> Container exec -> CPU stress.",
+            "ground_truth_note": "Client Ground Truth: Sequential Multimodal Kill-Chain.",
+            "instructions": [
+                "1. Open SOC Dashboard at http://localhost:8501.",
+                "2. Navigate to '📡 Live Detection' in sidebar.",
+                "3. Select Modality: '7. Full Tri-Modal Fusion'.",
+                "4. Trace multi-stage anomaly progression across the session window sequence.",
             ],
         }
     if scenario == "concurrent_attack":

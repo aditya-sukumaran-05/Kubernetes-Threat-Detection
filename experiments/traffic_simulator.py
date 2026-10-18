@@ -70,6 +70,10 @@ class SimulationSession:
         return asdict(self)
 
 
+# Suppress visible console window creation on Windows for subprocess calls
+SUBPROCESS_WINDOW_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if sys.platform == "win32" else 0
+
+
 def get_current_utc_str() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
@@ -78,7 +82,14 @@ def check_pod_running(pod_name: str, namespace: str = DEFAULT_NAMESPACE) -> bool
     """Verify that the target client pod is currently in Running state."""
     cmd = ["kubectl", "get", "pod", pod_name, "-n", namespace, "-o", "jsonpath={.status.phase}"]
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=8)
+        res = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=8,
+            creationflags=SUBPROCESS_WINDOW_FLAGS,
+        )
         return res.returncode == 0 and res.stdout.strip() == "Running"
     except Exception:
         return False
@@ -97,7 +108,14 @@ def run_single_http_request(
         "--", "wget", "-q", "-O", "/dev/null", target_service,
     ]
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=timeout)
+        res = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+            creationflags=SUBPROCESS_WINDOW_FLAGS,
+        )
         duration_ms = (time.perf_counter() - start_t) * 1000.0
         success = (res.returncode == 0)
         err = res.stderr.strip() if not success else ""
@@ -243,15 +261,16 @@ def start_benign_traffic(
 
     flags = 0
     if sys.platform == "win32":
-        flags = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-
-    log_path = Path("telemetry/data/benign_traffic_process.log")
-    log_file = open(log_path, "a", encoding="utf-8")
+        flags = (
+            subprocess.CREATE_NEW_PROCESS_GROUP
+            | 0x00000008  # DETACHED_PROCESS
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        )
 
     proc = subprocess.Popen(
         cmd,
-        stdout=log_file,
-        stderr=log_file,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
         close_fds=(sys.platform != "win32"),
         creationflags=flags,
@@ -283,7 +302,12 @@ def stop_benign_traffic() -> dict[str, Any]:
     if pid:
         try:
             if sys.platform == "win32":
-                subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True, check=False)
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(pid)],
+                    capture_output=True,
+                    check=False,
+                    creationflags=SUBPROCESS_WINDOW_FLAGS,
+                )
             else:
                 os.kill(pid, signal.SIGTERM)
                 time.sleep(0.5)
@@ -392,7 +416,14 @@ def execute_network_burst_scenario(
     cmd = ["kubectl", "exec", "-n", namespace, client_pod, "--", "sh", "-c", script]
     t0 = time.perf_counter()
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=duration_seconds + 15)
+        res = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=duration_seconds + 15,
+            creationflags=SUBPROCESS_WINDOW_FLAGS,
+        )
         dur = time.perf_counter() - t0
         session.duration_seconds = round(dur, 2)
         session.end_time_utc = get_current_utc_str()
@@ -467,7 +498,14 @@ def execute_runtime_anomaly_scenario(
     for cmd_str in commands:
         args = ["kubectl", "exec", "-n", namespace, target_workload, "--"] + cmd_str.split()
         try:
-            res = subprocess.run(args, capture_output=True, text=True, check=False, timeout=10)
+            res = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+                creationflags=SUBPROCESS_WINDOW_FLAGS,
+            )
             if res.returncode == 0:
                 completed += 1
             else:
@@ -542,7 +580,13 @@ def execute_concurrent_attack_scenario(
     burst_cmd = ["kubectl", "exec", "-n", namespace, client_pod, "--", "sh", "-c", script]
 
     t0 = time.perf_counter()
-    burst_proc = subprocess.Popen(burst_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    burst_proc = subprocess.Popen(
+        burst_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        creationflags=SUBPROCESS_WINDOW_FLAGS,
+    )
 
     # 2. Concurrently execute runtime commands
     completed_cmds = 0
@@ -551,7 +595,14 @@ def execute_concurrent_attack_scenario(
         time.sleep(0.5)
         args = ["kubectl", "exec", "-n", namespace, target_workload, "--"] + cmd_str.split()
         try:
-            res = subprocess.run(args, capture_output=True, text=True, check=False, timeout=8)
+            res = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=8,
+                creationflags=SUBPROCESS_WINDOW_FLAGS,
+            )
             if res.returncode == 0:
                 completed_cmds += 1
             else:
@@ -605,6 +656,600 @@ def execute_concurrent_attack_scenario(
     return session
 
 
+def execute_benign_baseline_scenario(
+    duration_seconds: float = 20.0,
+    base_interval: float = 2.0,
+    jitter: float = 0.8,
+    client_pod: str = DEFAULT_CLIENT_POD,
+    target_service: str = DEFAULT_TARGET_SERVICE,
+    namespace: str = DEFAULT_NAMESPACE,
+) -> SimulationSession:
+    """Execute a bounded normal traffic baseline session with natural jitter."""
+    if "cpu-test" in client_pod.lower() or "cpu-test" in target_service.lower():
+        raise ValueError("Safety violation: Targeting cpu-test is strictly prohibited.")
+    duration_seconds = max(2.0, min(float(duration_seconds), 60.0))
+    session_id = f"benign_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    session_dir = SIMULATION_RUNS_DIR / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    start_utc = get_current_utc_str()
+    session = SimulationSession(
+        session_id=session_id,
+        scenario="benign_baseline",
+        target_service=target_service,
+        client_pod=client_pod,
+        status="running",
+        start_time_utc=start_utc,
+        metadata={"duration_requested": duration_seconds, "base_interval": base_interval, "jitter": jitter},
+    )
+
+    client_logger = ClientTelemetryLogger()
+    t0 = time.perf_counter()
+    completed = 0
+    failed = 0
+    errors: list[str] = []
+    latencies: list[float] = []
+
+    while (time.perf_counter() - t0) < duration_seconds:
+        ok, lat, err = run_single_http_request(client_pod, target_service, namespace)
+        completed += (1 if ok else 0)
+        failed += (0 if ok else 1)
+        latencies.append(round(lat, 2))
+        if err:
+            errors.append(err)
+
+        rec = ClientRequestRecord(
+            experiment_id="client_benign_baseline",
+            session_id=session_id,
+            request_id=f"req_{completed + failed}_{int(time.time() * 1000)}",
+            client_timestamp_utc=get_client_utc_now(),
+            target_service=target_service,
+            method="GET",
+            status_code=200 if ok else 0,
+            duration_ms=round(lat, 2),
+            success=ok,
+            error_category="none" if ok else ("timeout" if "timeout" in err.lower() else "network_error"),
+            scenario_label="benign_baseline",
+        )
+        client_logger.record_request(rec)
+
+        delay = max(0.5, base_interval + random.uniform(-jitter, jitter))
+        if (time.perf_counter() - t0) + delay > duration_seconds:
+            break
+        time.sleep(delay)
+
+    dur = round(time.perf_counter() - t0, 2)
+    session.duration_seconds = dur
+    session.end_time_utc = get_current_utc_str()
+    session.requests_attempted = completed + failed
+    session.requests_completed = completed
+    session.requests_failed = failed
+    session.errors = errors[:5]
+    session.status = "completed" if completed > 0 else "failed"
+
+    (session_dir / "metadata.json").write_text(json.dumps(session.to_dict(), indent=2), encoding="utf-8")
+
+    manifest = ClientSessionManifest(
+        session_id=session_id,
+        experiment_id="client_benign_baseline",
+        scenario="benign_baseline",
+        target_service=target_service,
+        client_pod=client_pod,
+        status=session.status,
+        start_time_utc=start_utc,
+        end_time_utc=session.end_time_utc,
+        duration_seconds=dur,
+        requests_attempted=completed + failed,
+        requests_completed=completed,
+        requests_failed=failed,
+        response_code_distribution={"200": completed, "0": failed},
+        latency_summary=client_logger.compute_latency_summary(latencies),
+        errors=errors[:5],
+        metadata={"duration_requested": duration_seconds},
+    )
+    client_logger.save_session_manifest(manifest)
+    return session
+
+
+def execute_slow_vs_burst_scenario(
+    slow_requests: int = 5,
+    slow_interval: float = 2.0,
+    burst_requests: int = 30,
+    burst_duration: float = 6.0,
+    client_pod: str = DEFAULT_CLIENT_POD,
+    target_service: str = DEFAULT_TARGET_SERVICE,
+    namespace: str = DEFAULT_NAMESPACE,
+) -> SimulationSession:
+    """Execute two-phase comparison scenario: low-rate spaced requests followed by a rapid burst."""
+    if "cpu-test" in client_pod.lower() or "cpu-test" in target_service.lower():
+        raise ValueError("Safety violation: Targeting cpu-test is strictly prohibited.")
+    slow_requests = max(2, min(int(slow_requests), 20))
+    burst_requests = max(10, min(int(burst_requests), 80))
+    burst_duration = max(3.0, min(float(burst_duration), 15.0))
+
+    session_id = f"comparison_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    session_dir = SIMULATION_RUNS_DIR / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    start_utc = get_current_utc_str()
+    session = SimulationSession(
+        session_id=session_id,
+        scenario="slow_vs_burst",
+        target_service=target_service,
+        client_pod=client_pod,
+        status="running",
+        start_time_utc=start_utc,
+        requests_attempted=slow_requests + burst_requests,
+        metadata={"slow_requests": slow_requests, "burst_requests": burst_requests},
+    )
+
+    client_logger = ClientTelemetryLogger()
+    t0 = time.perf_counter()
+    slow_completed = 0
+    slow_failed = 0
+    latencies: list[float] = []
+
+    # Phase 1: Slow / spaced requests
+    phase1_start = get_current_utc_str()
+    for i in range(slow_requests):
+        ok, lat, err = run_single_http_request(client_pod, target_service, namespace)
+        slow_completed += (1 if ok else 0)
+        slow_failed += (0 if ok else 1)
+        latencies.append(round(lat, 2))
+        rec = ClientRequestRecord(
+            experiment_id="client_slow_vs_burst",
+            session_id=session_id,
+            request_id=f"slow_{i}_{int(time.time() * 1000)}",
+            client_timestamp_utc=get_client_utc_now(),
+            target_service=target_service,
+            method="GET",
+            status_code=200 if ok else 0,
+            duration_ms=round(lat, 2),
+            success=ok,
+            error_category="none" if ok else "error",
+            scenario_label="slow_phase_benign",
+        )
+        client_logger.record_request(rec)
+        time.sleep(slow_interval)
+
+    # Phase 2: Rapid burst flood
+    phase2_start = get_current_utc_str()
+    script = (
+        f"end=$(( $(date +%s) + {int(burst_duration)} )); "
+        "c=0; "
+        f"while [ \"$(date +%s)\" -lt \"$end\" ] && [ $c -lt {burst_requests} ]; do "
+        f"wget -q -O /dev/null {target_service}; "
+        "c=$((c+1)); "
+        "done; "
+        "echo $c"
+    )
+    burst_cmd = ["kubectl", "exec", "-n", namespace, client_pod, "--", "sh", "-c", script]
+    burst_completed = 0
+    try:
+        res = subprocess.run(
+            burst_cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=burst_duration + 10,
+            creationflags=SUBPROCESS_WINDOW_FLAGS,
+        )
+        if res.returncode == 0:
+            lines = res.stdout.strip().splitlines()
+            try:
+                burst_completed = int(lines[-1]) if lines else burst_requests
+            except ValueError:
+                burst_completed = burst_requests
+    except Exception as exc:
+        session.errors.append(str(exc))
+
+    dur = round(time.perf_counter() - t0, 2)
+    session.duration_seconds = dur
+    session.end_time_utc = get_current_utc_str()
+    session.requests_completed = slow_completed + burst_completed
+    session.requests_failed = slow_failed + max(0, burst_requests - burst_completed)
+    session.status = "completed" if (slow_completed > 0 and burst_completed > 0) else "partial"
+    session.metadata["phase1_slow_start"] = phase1_start
+    session.metadata["phase2_burst_start"] = phase2_start
+
+    (session_dir / "metadata.json").write_text(json.dumps(session.to_dict(), indent=2), encoding="utf-8")
+
+    manifest = ClientSessionManifest(
+        session_id=session_id,
+        experiment_id="client_slow_vs_burst",
+        scenario="slow_vs_burst",
+        target_service=target_service,
+        client_pod=client_pod,
+        status=session.status,
+        start_time_utc=start_utc,
+        end_time_utc=session.end_time_utc,
+        duration_seconds=dur,
+        requests_attempted=slow_requests + burst_requests,
+        requests_completed=session.requests_completed,
+        requests_failed=session.requests_failed,
+        response_code_distribution={"200": session.requests_completed, "0": session.requests_failed},
+        latency_summary=client_logger.compute_latency_summary(latencies),
+        metadata=session.metadata,
+    )
+    client_logger.save_session_manifest(manifest)
+    return session
+
+
+def execute_recovery_observation_scenario(
+    baseline_seconds: float = 6.0,
+    burst_requests: int = 30,
+    burst_duration: float = 6.0,
+    recovery_seconds: float = 6.0,
+    client_pod: str = DEFAULT_CLIENT_POD,
+    target_service: str = DEFAULT_TARGET_SERVICE,
+    namespace: str = DEFAULT_NAMESPACE,
+) -> SimulationSession:
+    """Execute tripartite scenario: pre-attack baseline -> attack burst -> post-attack recovery."""
+    if "cpu-test" in client_pod.lower() or "cpu-test" in target_service.lower():
+        raise ValueError("Safety violation: Targeting cpu-test is strictly prohibited.")
+    burst_requests = max(10, min(int(burst_requests), 60))
+    burst_duration = max(3.0, min(float(burst_duration), 12.0))
+
+    session_id = f"recovery_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    session_dir = SIMULATION_RUNS_DIR / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    start_utc = get_current_utc_str()
+    session = SimulationSession(
+        session_id=session_id,
+        scenario="recovery_observation",
+        target_service=target_service,
+        client_pod=client_pod,
+        status="running",
+        start_time_utc=start_utc,
+        requests_attempted=burst_requests + 6,
+    )
+
+    client_logger = ClientTelemetryLogger()
+    t0 = time.perf_counter()
+    completed_reqs = 0
+    failed_reqs = 0
+    latencies: list[float] = []
+
+    # Phase 1: Pre-attack baseline
+    phase1_start = get_current_utc_str()
+    for i in range(3):
+        ok, lat, err = run_single_http_request(client_pod, target_service, namespace)
+        completed_reqs += (1 if ok else 0)
+        failed_reqs += (0 if ok else 1)
+        latencies.append(round(lat, 2))
+        rec = ClientRequestRecord(
+            experiment_id="client_recovery",
+            session_id=session_id,
+            request_id=f"base_pre_{i}_{int(time.time() * 1000)}",
+            client_timestamp_utc=get_client_utc_now(),
+            target_service=target_service,
+            method="GET",
+            status_code=200 if ok else 0,
+            duration_ms=round(lat, 2),
+            success=ok,
+            error_category="none" if ok else "error",
+            scenario_label="pre_attack_baseline",
+        )
+        client_logger.record_request(rec)
+        time.sleep(max(1.0, baseline_seconds / 3.0))
+
+    # Phase 2: Attack activity (burst)
+    phase2_start = get_current_utc_str()
+    script = (
+        f"end=$(( $(date +%s) + {int(burst_duration)} )); "
+        "c=0; "
+        f"while [ \"$(date +%s)\" -lt \"$end\" ] && [ $c -lt {burst_requests} ]; do "
+        f"wget -q -O /dev/null {target_service}; "
+        "c=$((c+1)); "
+        "done; "
+        "echo $c"
+    )
+    burst_cmd = ["kubectl", "exec", "-n", namespace, client_pod, "--", "sh", "-c", script]
+    burst_c = 0
+    try:
+        res = subprocess.run(
+            burst_cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=burst_duration + 8,
+            creationflags=SUBPROCESS_WINDOW_FLAGS,
+        )
+        if res.returncode == 0:
+            lines = res.stdout.strip().splitlines()
+            try:
+                burst_c = int(lines[-1]) if lines else burst_requests
+            except ValueError:
+                burst_c = burst_requests
+    except Exception as exc:
+        session.errors.append(str(exc))
+    completed_reqs += burst_c
+    failed_reqs += max(0, burst_requests - burst_c)
+
+    # Phase 3: Post-attack recovery / cooldown
+    phase3_start = get_current_utc_str()
+    for i in range(3):
+        ok, lat, err = run_single_http_request(client_pod, target_service, namespace)
+        completed_reqs += (1 if ok else 0)
+        failed_reqs += (0 if ok else 1)
+        latencies.append(round(lat, 2))
+        rec = ClientRequestRecord(
+            experiment_id="client_recovery",
+            session_id=session_id,
+            request_id=f"base_post_{i}_{int(time.time() * 1000)}",
+            client_timestamp_utc=get_client_utc_now(),
+            target_service=target_service,
+            method="GET",
+            status_code=200 if ok else 0,
+            duration_ms=round(lat, 2),
+            success=ok,
+            error_category="none" if ok else "error",
+            scenario_label="post_attack_recovery",
+        )
+        client_logger.record_request(rec)
+        time.sleep(max(1.0, recovery_seconds / 3.0))
+
+    dur = round(time.perf_counter() - t0, 2)
+    session.duration_seconds = dur
+    session.end_time_utc = get_current_utc_str()
+    session.requests_completed = completed_reqs
+    session.requests_failed = failed_reqs
+    session.status = "completed"
+    session.metadata = {
+        "phase1_baseline_start": phase1_start,
+        "phase2_attack_start": phase2_start,
+        "phase3_recovery_start": phase3_start,
+        "burst_completed": burst_c,
+    }
+
+    (session_dir / "metadata.json").write_text(json.dumps(session.to_dict(), indent=2), encoding="utf-8")
+
+    manifest = ClientSessionManifest(
+        session_id=session_id,
+        experiment_id="client_recovery",
+        scenario="recovery_observation",
+        target_service=target_service,
+        client_pod=client_pod,
+        status=session.status,
+        start_time_utc=start_utc,
+        end_time_utc=session.end_time_utc,
+        duration_seconds=dur,
+        requests_attempted=burst_requests + 6,
+        requests_completed=completed_reqs,
+        requests_failed=failed_reqs,
+        response_code_distribution={"200": completed_reqs, "0": failed_reqs},
+        latency_summary=client_logger.compute_latency_summary(latencies),
+        metadata=session.metadata,
+    )
+    client_logger.save_session_manifest(manifest)
+    return session
+
+
+def execute_runtime_benign_scenario(
+    commands: Sequence[str] = ("date -u", "uptime", "cat /etc/os-release", "echo healthcheck"),
+    target_workload: str = DEFAULT_WORKLOAD_POD,
+    namespace: str = DEFAULT_NAMESPACE,
+    delay_seconds: float = 0.5,
+) -> SimulationSession:
+    """Launch benign, non-adversarial system queries inside webapp container to establish benign runtime baseline."""
+    if "cpu-test" in target_workload.lower():
+        raise ValueError("Safety violation: Targeting cpu-test is strictly prohibited.")
+    session_id = f"rt_benign_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    session_dir = SIMULATION_RUNS_DIR / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    start_utc = get_current_utc_str()
+    session = SimulationSession(
+        session_id=session_id,
+        scenario="runtime_benign",
+        target_service="in-container-exec",
+        client_pod=target_workload,
+        status="running",
+        start_time_utc=start_utc,
+        commands_attempted=len(commands),
+    )
+
+    t0 = time.perf_counter()
+    completed = 0
+    errors: list[str] = []
+
+    for cmd_str in commands:
+        args = ["kubectl", "exec", "-n", namespace, target_workload, "--"] + cmd_str.split()
+        try:
+            res = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=8,
+                creationflags=SUBPROCESS_WINDOW_FLAGS,
+            )
+            if res.returncode == 0:
+                completed += 1
+            else:
+                errors.append(f"Command '{cmd_str}' failed: {res.stderr.strip()}")
+        except Exception as exc:
+            errors.append(f"Command '{cmd_str}' exception: {exc}")
+        time.sleep(delay_seconds)
+
+    dur = round(time.perf_counter() - t0, 2)
+    session.duration_seconds = dur
+    session.end_time_utc = get_current_utc_str()
+    session.commands_completed = completed
+    session.errors = errors
+    session.status = "completed" if completed == len(commands) else ("partial" if completed > 0 else "failed")
+
+    (session_dir / "metadata.json").write_text(json.dumps(session.to_dict(), indent=2), encoding="utf-8")
+
+    manifest = ClientSessionManifest(
+        session_id=session_id,
+        experiment_id="client_runtime_benign",
+        scenario="runtime_benign",
+        target_service="in-container-exec",
+        client_pod=target_workload,
+        status=session.status,
+        start_time_utc=start_utc,
+        end_time_utc=session.end_time_utc,
+        duration_seconds=dur,
+        commands_attempted=len(commands),
+        commands_completed=completed,
+        errors=errors,
+        metadata={"commands": list(commands), "target_workload": target_workload},
+    )
+    ClientTelemetryLogger().save_session_manifest(manifest)
+    return session
+
+
+def execute_sequential_multimodal_scenario(
+    burst_requests: int = 30,
+    burst_duration: float = 6.0,
+    commands: Sequence[str] = ("id", "whoami"),
+    cpu_duration: float = 6.0,
+    client_pod: str = DEFAULT_CLIENT_POD,
+    target_workload: str = DEFAULT_WORKLOAD_POD,
+    target_service: str = DEFAULT_TARGET_SERVICE,
+    namespace: str = DEFAULT_NAMESPACE,
+) -> SimulationSession:
+    """Execute sequential multimodal attack: Phase 1 (Burst) -> Phase 2 (Runtime) -> Phase 3 (CPU Stress)."""
+    if "cpu-test" in target_workload.lower() or "cpu-test" in client_pod.lower():
+        raise ValueError("Safety violation: Targeting cpu-test is strictly prohibited.")
+    cpu_duration = max(2.0, min(float(cpu_duration), 15.0))
+    burst_duration = max(2.0, min(float(burst_duration), 15.0))
+
+    session_id = f"sequential_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    session_dir = SIMULATION_RUNS_DIR / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    start_utc = get_current_utc_str()
+    session = SimulationSession(
+        session_id=session_id,
+        scenario="sequential_multimodal",
+        target_service=target_service,
+        client_pod=f"{client_pod}+{target_workload}",
+        status="running",
+        start_time_utc=start_utc,
+        requests_attempted=burst_requests,
+        commands_attempted=len(commands) + 1,
+    )
+
+    t0 = time.perf_counter()
+    errors: list[str] = []
+
+    # Phase 1: Network Burst
+    phase1_start = get_current_utc_str()
+    script = (
+        f"end=$(( $(date +%s) + {int(burst_duration)} )); "
+        "c=0; "
+        f"while [ \"$(date +%s)\" -lt \"$end\" ] && [ $c -lt {burst_requests} ]; do "
+        f"wget -q -O /dev/null {target_service}; "
+        "c=$((c+1)); "
+        "done; "
+        "echo $c"
+    )
+    burst_c = 0
+    try:
+        res = subprocess.run(
+            ["kubectl", "exec", "-n", namespace, client_pod, "--", "sh", "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=burst_duration + 8,
+            creationflags=SUBPROCESS_WINDOW_FLAGS,
+        )
+        if res.returncode == 0:
+            lines = res.stdout.strip().splitlines()
+            try:
+                burst_c = int(lines[-1]) if lines else burst_requests
+            except ValueError:
+                burst_c = burst_requests
+    except Exception as exc:
+        errors.append(f"Phase 1 burst failed: {exc}")
+
+    # Phase 2: Runtime Introspection
+    phase2_start = get_current_utc_str()
+    rt_c = 0
+    for cmd_str in commands:
+        try:
+            r = subprocess.run(
+                ["kubectl", "exec", "-n", namespace, target_workload, "--"] + cmd_str.split(),
+                capture_output=True,
+                text=True,
+                timeout=6,
+                creationflags=SUBPROCESS_WINDOW_FLAGS,
+            )
+            if r.returncode == 0:
+                rt_c += 1
+        except Exception as exc:
+            errors.append(f"Phase 2 command failed: {exc}")
+
+    # Phase 3: Bounded In-Pod CPU Stress
+    phase3_start = get_current_utc_str()
+    cluster_dict = {"namespace": namespace, "target_workload": target_workload}
+    cpu_cmd = cpu_attack_command(cluster_dict)
+    cpu_proc = None
+    try:
+        cpu_proc = subprocess.Popen(
+            cpu_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            creationflags=SUBPROCESS_WINDOW_FLAGS,
+        )
+        time.sleep(cpu_duration)
+    except Exception as exc:
+        errors.append(f"Phase 3 CPU stress failed: {exc}")
+    finally:
+        stop_cpu_attack(cluster_dict)
+        if cpu_proc and cpu_proc.poll() is None:
+            if sys.platform == "win32":
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(cpu_proc.pid)],
+                    capture_output=True,
+                    check=False,
+                    creationflags=SUBPROCESS_WINDOW_FLAGS,
+                )
+            else:
+                cpu_proc.kill()
+
+    dur = round(time.perf_counter() - t0, 2)
+    session.duration_seconds = dur
+    session.end_time_utc = get_current_utc_str()
+    session.requests_completed = burst_c
+    session.requests_failed = max(0, burst_requests - burst_c)
+    session.commands_completed = rt_c + 1
+    session.errors = errors
+    session.status = "completed" if (burst_c > 0 and rt_c > 0) else "partial"
+    session.metadata = {
+        "phase1_burst_start": phase1_start,
+        "phase2_runtime_start": phase2_start,
+        "phase3_cpu_start": phase3_start,
+    }
+
+    (session_dir / "metadata.json").write_text(json.dumps(session.to_dict(), indent=2), encoding="utf-8")
+
+    manifest = ClientSessionManifest(
+        session_id=session_id,
+        experiment_id="client_sequential_multimodal",
+        scenario="sequential_multimodal",
+        target_service=target_service,
+        client_pod=session.client_pod,
+        status=session.status,
+        start_time_utc=start_utc,
+        end_time_utc=session.end_time_utc,
+        duration_seconds=dur,
+        requests_attempted=burst_requests,
+        requests_completed=burst_c,
+        requests_failed=max(0, burst_requests - burst_c),
+        commands_attempted=len(commands) + 1,
+        commands_completed=session.commands_completed,
+        response_code_distribution={"200": burst_c, "0": max(0, burst_requests - burst_c)},
+        errors=errors,
+        metadata=session.metadata,
+    )
+    ClientTelemetryLogger().save_session_manifest(manifest)
+    return session
+
+
 def execute_cpu_stress_scenario(
     duration_seconds: float = 10.0,
     target_workload: str = DEFAULT_WORKLOAD_POD,
@@ -644,7 +1289,13 @@ def execute_cpu_stress_scenario(
     errors: list[str] = []
 
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            creationflags=SUBPROCESS_WINDOW_FLAGS,
+        )
         time.sleep(duration_seconds)
     except Exception as exc:
         errors.append(f"Failed to launch CPU stress: {exc}")
@@ -654,7 +1305,12 @@ def execute_cpu_stress_scenario(
             errors.append(stop_err)
         if proc and proc.poll() is None:
             if sys.platform == "win32":
-                subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, check=False)
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    capture_output=True,
+                    check=False,
+                    creationflags=SUBPROCESS_WINDOW_FLAGS,
+                )
             else:
                 proc.kill()
                 proc.wait(timeout=3)
@@ -749,7 +1405,17 @@ def main() -> None:
     p_attack = subparsers.add_parser("run-attack", help="Execute an on-demand attack scenario")
     p_attack.add_argument(
         "--scenario",
-        choices=["network_burst", "runtime_anomaly", "concurrent_attack", "cpu_stress"],
+        choices=[
+            "network_burst",
+            "runtime_anomaly",
+            "concurrent_attack",
+            "cpu_stress",
+            "benign_baseline",
+            "slow_vs_burst",
+            "recovery_observation",
+            "runtime_benign",
+            "sequential_multimodal",
+        ],
         required=True,
     )
     p_attack.add_argument("--requests", type=int, default=50)
@@ -805,6 +1471,16 @@ def main() -> None:
             session = execute_concurrent_attack_scenario(burst_requests=args.requests, duration_seconds=args.duration)
         elif args.scenario == "cpu_stress":
             session = execute_cpu_stress_scenario(duration_seconds=args.duration)
+        elif args.scenario == "benign_baseline":
+            session = execute_benign_baseline_scenario(duration_seconds=args.duration)
+        elif args.scenario == "slow_vs_burst":
+            session = execute_slow_vs_burst_scenario(burst_requests=args.requests)
+        elif args.scenario == "recovery_observation":
+            session = execute_recovery_observation_scenario(burst_requests=args.requests)
+        elif args.scenario == "runtime_benign":
+            session = execute_runtime_benign_scenario()
+        elif args.scenario == "sequential_multimodal":
+            session = execute_sequential_multimodal_scenario(burst_requests=args.requests)
         print(json.dumps(session.to_dict(), indent=2))
 
 

@@ -8,6 +8,8 @@ recent detection decisions panel matching the K8S SENTINEL reference design.
 
 from __future__ import annotations
 
+import csv
+import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,7 +28,13 @@ from dashboard.live_engine import (
     LiveWindowRecord,
 )
 from ml.inference import ThreatDetector
-from telemetry.schemas import load_network_events, load_runtime_events, load_workload_samples
+from telemetry.schemas import (
+    NetworkEvent,
+    WorkloadSample,
+    load_network_events,
+    load_runtime_events,
+    load_workload_samples,
+)
 from telemetry.windowing import isoformat_z, window_start
 
 
@@ -39,9 +47,52 @@ def _get_historical_active_windows(
     rt_path = project_root / DEFAULT_RUNTIME_PATH
     wl_path = project_root / DEFAULT_WORKLOAD_PATH
 
-    nets = list(load_network_events(net_path)) if net_path.exists() else []
+    nets: list[NetworkEvent] = []
+    if net_path.exists():
+        try:
+            size = net_path.stat().st_size
+            with net_path.open("rb") as f:
+                if size > 1024 * 1024:
+                    f.seek(size - 1024 * 1024)
+                    f.readline()  # discard partial first line
+                lines = f.read().decode("utf-8", errors="replace").splitlines()
+                for line in lines:
+                    line_str = line.strip()
+                    if line_str.startswith("{"):
+                        try:
+                            nets.append(NetworkEvent.from_raw(json.loads(line_str)))
+                        except Exception:
+                            continue
+        except Exception:
+            nets = list(load_network_events(net_path))
+
     rts = list(load_runtime_events(rt_path)) if rt_path.exists() else []
-    wls = list(load_workload_samples(wl_path)) if wl_path.exists() else []
+
+    wls: list[WorkloadSample] = []
+    if wl_path.exists():
+        try:
+            size = wl_path.stat().st_size
+            with wl_path.open("rb") as f:
+                if size > 150 * 1024:
+                    f.seek(size - 150 * 1024)
+                    f.readline()  # discard partial first line
+                lines = f.read().decode("utf-8", errors="replace").splitlines()
+                for parts in csv.reader(lines):
+                    if len(parts) >= 4 and not parts[0].startswith("timestamp"):
+                        try:
+                            wls.append(
+                                WorkloadSample(
+                                    timestamp=parts[0].strip(),
+                                    pod=parts[1].strip(),
+                                    cpu_millicores=float(parts[2].strip()),
+                                    memory_mib=float(parts[3].strip()),
+                                    label=parts[4].strip() if len(parts) > 4 else "normal",
+                                )
+                            )
+                        except Exception:
+                            continue
+        except Exception:
+            wls = list(load_workload_samples(wl_path))
 
     # Map timestamps to windows
     win_data: dict[str, dict[str, Any]] = {}

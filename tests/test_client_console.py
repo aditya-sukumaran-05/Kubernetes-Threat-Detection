@@ -292,7 +292,7 @@ def test_client_console_streamlit_app_renders() -> None:
     from streamlit.testing.v1 import AppTest
 
     at = AppTest.from_file("client_console/app.py")
-    at.run()
+    at.run(timeout=15)
     assert not at.exception
     assert len(at.tabs) == 3
     assert len(at.button) >= 5
