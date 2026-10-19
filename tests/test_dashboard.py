@@ -821,4 +821,48 @@ def test_dashboard_overview_active_workload_high_cpu_counted_as_attack(monkeypat
     assert active_det_metrics[0].value == "1"
 
 
+def test_get_historical_active_windows_caching_and_invalidation(tmp_path: Path) -> None:
+    import json
+    from dashboard.components.overview import _get_historical_active_windows
+
+    net_dir = tmp_path / "telemetry" / "data" / "network"
+    net_dir.mkdir(parents=True)
+    net_file = net_dir / "network_events.jsonl"
+
+    # 1. Initial write with 1 event
+    ev1 = {
+        "timestamp": "2026-10-18T10:00:01.000Z",
+        "collector_timestamp": "2026-10-18T10:00:01.000Z",
+        "type": "accept",
+        "src": {"addr": "10.0.0.1", "port": 80},
+        "dst": {"addr": "10.0.0.2", "port": 12345},
+    }
+    net_file.write_text(json.dumps(ev1) + "\n", encoding="utf-8")
+
+    res1 = _get_historical_active_windows(tmp_path, limit=10)
+    assert len(res1) == 1
+    assert res1[0]["network_events"] == 1
+
+    # 2. Subsequent call on unchanged file returns cached result
+    res2 = _get_historical_active_windows(tmp_path, limit=10)
+    assert len(res2) == 1
+    assert res2[0]["network_events"] == 1
+
+    # 3. Append new event in next window -> cache invalidated via file signature change
+    ev2 = {
+        "timestamp": "2026-10-18T10:00:15.000Z",
+        "collector_timestamp": "2026-10-18T10:00:15.000Z",
+        "type": "accept",
+        "src": {"addr": "10.0.0.1", "port": 80},
+        "dst": {"addr": "10.0.0.2", "port": 12346},
+    }
+    with net_file.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(ev2) + "\n")
+
+    res3 = _get_historical_active_windows(tmp_path, limit=10)
+    assert len(res3) == 2
+    assert res3[-1]["network_events"] == 1
+
+
+
 

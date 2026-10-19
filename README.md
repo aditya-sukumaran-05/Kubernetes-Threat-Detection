@@ -84,6 +84,22 @@ burst only against `http://webapp` from the local traffic-generator Pod.
 `workload_attack` and `fusion_attack` run a controlled CPU loop in the local
 test workload. Do not use `--execute` against any context other than Minikube.
 
+## Evaluation Artifacts and Telemetry Ablation Map
+
+The framework produces and maintains distinct evaluation benchmarks across development phases:
+
+- **Canonical 7-Modality LOSO Benchmark (`results/loso/`):**
+  - Primary files: `results/loso/loso_aggregate_comparison.csv` and `results/loso/loso_summary.json`
+  - Scope: The authoritative reference evaluation comparing all seven modalities (`network`, `workload`, `fusion`, `runtime`, `net_rt`, `rt_wl`, `full_fusion`) across 8 to 35 independent experiment sessions.
+  - Leakage Safeguard: Leave-One-Session-Out (LOSO) cross-validation guarantees zero temporal autocorrelation leakage across adjacent 10-second observation windows; data imputation and scaling transformations are strictly fitted on training folds only.
+- **Historical 3-Modality Baseline (`results/`):**
+  - Primary files: `results/ablation_comparison.csv` and `results/ablation_comparison.json`
+  - Scope: Early Phase 2 baseline evaluating only three legacy modalities (`network`, `workload`, `fusion`) under a single train/test session holdout. Preserved as an immutable historical record.
+- **Campaign Run Archives (`results/campaign_*/`):**
+  - Point-in-time campaign execution snapshots preserved for historical verification.
+- **Note on Discontinued Paths:**
+  - `results/metrics/ablation_study.csv` does not exist; all cross-modality ablation references should consult `results/loso/loso_aggregate_comparison.csv`.
+
 ## Threat Detection Dashboard
 
 The project includes an interactive Streamlit dashboard for demonstrating the

@@ -38,11 +38,30 @@ from telemetry.schemas import (
 from telemetry.windowing import isoformat_z, window_start
 
 
-def _get_historical_active_windows(
-    project_root: Path,
-    limit: int = 30,
+def _get_telemetry_signature(project_root: Path) -> tuple[tuple[int, int], ...]:
+    """Capture file size and mtime_ns for underlying telemetry files to guarantee cache invalidation."""
+    sigs = []
+    for rel_path in (DEFAULT_NETWORK_PATH, DEFAULT_RUNTIME_PATH, DEFAULT_WORKLOAD_PATH):
+        p = project_root / rel_path
+        if p.exists():
+            try:
+                st_stat = p.stat()
+                sigs.append((st_stat.st_size, int(st_stat.st_mtime_ns)))
+            except OSError:
+                sigs.append((0, 0))
+        else:
+            sigs.append((0, 0))
+    return tuple(sigs)
+
+
+@st.cache_data(ttl=15, show_spinner=False)
+def _cached_historical_active_windows(
+    project_root_str: str,
+    limit: int,
+    telemetry_sig: tuple[tuple[int, int], ...],
 ) -> list[dict[str, Any]]:
     """Synthesize synchronized 10s windows containing actual recorded activity across collectors."""
+    project_root = Path(project_root_str)
     net_path = project_root / DEFAULT_NETWORK_PATH
     rt_path = project_root / DEFAULT_RUNTIME_PATH
     wl_path = project_root / DEFAULT_WORKLOAD_PATH
@@ -124,6 +143,20 @@ def _get_historical_active_windows(
 
     sorted_active = [win_data[k] for k in sorted(win_data)]
     return sorted_active[-limit:] if sorted_active else []
+
+
+def _get_historical_active_windows(
+    project_root: Path,
+    limit: int = 30,
+) -> list[dict[str, Any]]:
+    """Synthesize synchronized 10s windows containing actual recorded activity across collectors.
+
+    Caches results using st.cache_data with a 15-second TTL and automatic cache invalidation
+    on file mutation (file size or mtime change) to prevent serving stale telemetry.
+    """
+    root_path = Path(project_root).resolve()
+    sig = _get_telemetry_signature(root_path)
+    return _cached_historical_active_windows(str(root_path), limit=limit, telemetry_sig=sig)
 
 
 def render_overview(

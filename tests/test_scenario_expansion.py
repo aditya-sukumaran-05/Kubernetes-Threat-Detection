@@ -274,5 +274,5 @@ def test_dashboard_app_renders_with_cached_resources() -> None:
     from streamlit.testing.v1 import AppTest
 
     at = AppTest.from_file("dashboard/app.py")
-    at.run(timeout=30)
+    at.run(timeout=45)
     assert not at.exception

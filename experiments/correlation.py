@@ -20,12 +20,32 @@ from typing import Any, Sequence
 
 from telemetry.client_telemetry import ClientSessionManifest, ClientTelemetryLogger
 
-_REPORT_CACHE: dict[str, CorrelationReport] = {}
+_REPORT_CACHE: dict[str, tuple[CorrelationReport, tuple[tuple[int, int], ...], Any]] = {}
 
 
 def clear_correlation_cache() -> None:
     """Clear the in-memory correlation reports cache."""
     _REPORT_CACHE.clear()
+
+
+def _get_server_telemetry_signature(root: Path) -> tuple[tuple[int, int], ...]:
+    """Capture file size and mtime_ns for underlying server telemetry files to guarantee cache invalidation."""
+    sigs = []
+    for rel_path in (
+        Path("telemetry/data/network/network_events.jsonl"),
+        Path("telemetry/data/runtime/runtime_events.jsonl"),
+        Path("telemetry/data/workload_metrics.csv"),
+    ):
+        p = root / rel_path
+        if p.exists():
+            try:
+                st = p.stat()
+                sigs.append((st.st_size, int(st.st_mtime_ns)))
+            except OSError:
+                sigs.append((0, 0))
+        else:
+            sigs.append((0, 0))
+    return tuple(sigs)
 
 
 def parse_iso_utc(ts_str: str) -> datetime:
@@ -87,32 +107,94 @@ class CorrelationReport:
 
 
 def correlate_client_session(
-    session_id: str,
+    session_id: str | ClientSessionManifest,
     project_root: Path | str = ".",
     logger: ClientTelemetryLogger | None = None,
 ) -> CorrelationReport:
-    """Correlate a client session against active server telemetry records."""
-    if session_id in _REPORT_CACHE:
-        return _REPORT_CACHE[session_id]
+    """Correlate a client session against active server telemetry records.
+
+    Supports either a session ID string or an already-parsed ClientSessionManifest instance.
+    """
+    manifest: ClientSessionManifest | None = None
+    resolved_id: str
+
+    if isinstance(session_id, ClientSessionManifest):
+        manifest = session_id
+        if not isinstance(manifest.session_id, str) or not manifest.session_id.strip():
+            raise ValueError("ClientSessionManifest must have a non-empty string session_id.")
+        if not isinstance(manifest.start_time_utc, str) or not manifest.start_time_utc.strip():
+            raise ValueError("ClientSessionManifest must have a non-empty string start_time_utc.")
+        try:
+            parse_iso_utc(manifest.start_time_utc)
+        except Exception as err:
+            raise ValueError(f"ClientSessionManifest has invalid start_time_utc ISO format: {err}") from err
+        if manifest.end_time_utc is not None:
+            if not isinstance(manifest.end_time_utc, str) or not manifest.end_time_utc.strip():
+                raise ValueError("ClientSessionManifest end_time_utc must be None or a non-empty string.")
+            try:
+                parse_iso_utc(manifest.end_time_utc)
+            except Exception as err:
+                raise ValueError(f"ClientSessionManifest has invalid end_time_utc ISO format: {err}") from err
+        resolved_id = manifest.session_id.strip()
+    elif isinstance(session_id, str):
+        resolved_id = session_id.strip()
+        if not resolved_id:
+            raise ValueError("session_id string cannot be empty or whitespace.")
+    else:
+        raise TypeError(
+            f"Unsupported session argument type: {type(session_id).__name__}. "
+            "Expected str or ClientSessionManifest."
+        )
 
     root = Path(project_root).resolve()
+    telemetry_sig = _get_server_telemetry_signature(root)
+
+    # Check cache early to avoid redundant disk reads while guaranteeing invalidation
+    if resolved_id in _REPORT_CACHE:
+        cached_report, cached_tel_sig, cached_man_sig = _REPORT_CACHE[resolved_id]
+        if telemetry_sig == cached_tel_sig:
+            if manifest is not None:
+                man_sig = (
+                    manifest.status,
+                    manifest.start_time_utc,
+                    manifest.end_time_utc,
+                    manifest.duration_seconds,
+                    manifest.requests_attempted,
+                    manifest.requests_completed,
+                    manifest.requests_failed,
+                )
+                if man_sig == cached_man_sig:
+                    return cached_report
+            else:
+                mf = root / "telemetry" / "data" / "client" / "sessions" / resolved_id / "manifest.json"
+                if not mf.exists():
+                    mf = root / "experiments" / "simulation_runs" / resolved_id / "metadata.json"
+                if mf.exists():
+                    try:
+                        st_m = mf.stat()
+                        if (st_m.st_size, int(st_m.st_mtime_ns)) == cached_man_sig:
+                            return cached_report
+                    except OSError:
+                        pass
+
     client_logger = logger or ClientTelemetryLogger(root / "telemetry" / "data" / "client")
 
-    manifest = client_logger.get_session_manifest(session_id)
     if manifest is None:
-        # Fallback to simulation_runs directory if not in client sessions
-        sim_dir = root / "experiments" / "simulation_runs" / session_id
-        meta_file = sim_dir / "metadata.json"
-        if meta_file.exists():
-            try:
-                data = json.loads(meta_file.read_text(encoding="utf-8"))
-                manifest = ClientSessionManifest.from_dict(data)
-            except Exception:
-                manifest = None
+        manifest = client_logger.get_session_manifest(resolved_id)
+        if manifest is None:
+            # Fallback to simulation_runs directory if not in client sessions
+            sim_dir = root / "experiments" / "simulation_runs" / resolved_id
+            meta_file = sim_dir / "metadata.json"
+            if meta_file.exists():
+                try:
+                    data = json.loads(meta_file.read_text(encoding="utf-8"))
+                    manifest = ClientSessionManifest.from_dict(data)
+                except Exception:
+                    manifest = None
 
     if manifest is None:
         return CorrelationReport(
-            session_id=session_id,
+            session_id=resolved_id,
             scenario="unknown",
             client_status="not_found",
             client_start_utc="",
@@ -127,8 +209,15 @@ def correlate_client_session(
             uncertainty_explanation="Session manifest could not be located.",
         )
 
+    # Validate start_time_utc on resolved manifest
+    if not isinstance(manifest.start_time_utc, str) or not manifest.start_time_utc.strip():
+        raise ValueError(f"Session '{resolved_id}' has empty start_time_utc in manifest.")
+    try:
+        start_dt = parse_iso_utc(manifest.start_time_utc)
+    except Exception as err:
+        raise ValueError(f"Session '{resolved_id}' has invalid start_time_utc in manifest: {err}") from err
+
     # Determine start and end time boundaries
-    start_dt = parse_iso_utc(manifest.start_time_utc)
     if manifest.end_time_utc:
         end_dt = parse_iso_utc(manifest.end_time_utc)
     else:
@@ -354,7 +443,34 @@ def correlate_client_session(
         window_details=window_details,
     )
     if manifest.status in ("completed", "failed", "cancelled"):
-        _REPORT_CACHE[manifest.session_id] = report
+        mf = root / "telemetry" / "data" / "client" / "sessions" / resolved_id / "manifest.json"
+        if not mf.exists():
+            mf = root / "experiments" / "simulation_runs" / resolved_id / "metadata.json"
+        if mf.exists():
+            try:
+                st_m = mf.stat()
+                stored_man_sig = (st_m.st_size, int(st_m.st_mtime_ns))
+            except OSError:
+                stored_man_sig = (
+                    manifest.status,
+                    manifest.start_time_utc,
+                    manifest.end_time_utc,
+                    manifest.duration_seconds,
+                    manifest.requests_attempted,
+                    manifest.requests_completed,
+                    manifest.requests_failed,
+                )
+        else:
+            stored_man_sig = (
+                manifest.status,
+                manifest.start_time_utc,
+                manifest.end_time_utc,
+                manifest.duration_seconds,
+                manifest.requests_attempted,
+                manifest.requests_completed,
+                manifest.requests_failed,
+            )
+        _REPORT_CACHE[resolved_id] = (report, telemetry_sig, stored_man_sig)
     return report
 
 

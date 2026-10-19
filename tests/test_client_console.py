@@ -12,6 +12,7 @@ import pytest
 
 from experiments.correlation import (
     CorrelationReport,
+    clear_correlation_cache,
     correlate_client_session,
     floor_to_10s_window,
     parse_iso_utc,
@@ -286,6 +287,185 @@ def test_correlation_missing_session(tmp_path: Path) -> None:
     report = correlate_client_session("non_existent_session", project_root=tmp_path)
     assert report.client_status == "not_found"
     assert report.correlation_grade == "uncorrelated"
+
+
+def test_correlation_accepts_manifest_instance_equivalent_results(tmp_path: Path) -> None:
+    clear_correlation_cache()
+    logger = ClientTelemetryLogger(tmp_path / "telemetry" / "data" / "client")
+    manifest = ClientSessionManifest(
+        session_id="poly_test_01",
+        experiment_id="exp_poly_01",
+        scenario="network_burst",
+        target_service="http://webapp.default.svc.cluster.local",
+        client_pod="traffic-generator",
+        status="completed",
+        start_time_utc="2026-10-17T10:00:00.000Z",
+        end_time_utc="2026-10-17T10:00:10.000Z",
+        duration_seconds=10.0,
+        requests_attempted=20,
+        requests_completed=20,
+    )
+    logger.save_session_manifest(manifest)
+
+    # Set up server network events in matching window
+    net_dir = tmp_path / "telemetry" / "data" / "network"
+    net_dir.mkdir(parents=True)
+    net_file = net_dir / "network_events.jsonl"
+    events = [
+        {"collector_timestamp": "2026-10-17T10:00:03.000Z", "type": "accept", "src": {"addr": "10.0.0.1", "port": 80}},
+    ]
+    net_file.write_text("".join(json.dumps(e) + "\n" for e in events), encoding="utf-8")
+
+    # 1. Correlate with session_id string
+    clear_correlation_cache()
+    report_from_str = correlate_client_session("poly_test_01", project_root=tmp_path, logger=logger)
+
+    # 2. Correlate with ClientSessionManifest object
+    clear_correlation_cache()
+    report_from_obj = correlate_client_session(manifest, project_root=tmp_path, logger=logger)
+
+    # Results must be completely equivalent
+    assert report_from_str.session_id == report_from_obj.session_id == "poly_test_01"
+    assert report_from_str.scenario == report_from_obj.scenario == "network_burst"
+    assert report_from_str.server_network_events == report_from_obj.server_network_events == 1
+    assert report_from_str.matched_window_count == report_from_obj.matched_window_count == 1
+    assert report_from_str.correlation_grade == report_from_obj.correlation_grade
+
+
+def test_correlation_normalizes_whitespace(tmp_path: Path) -> None:
+    clear_correlation_cache()
+    logger = ClientTelemetryLogger(tmp_path / "telemetry" / "data" / "client")
+    manifest = ClientSessionManifest(
+        session_id="trim_test_01",
+        experiment_id="exp_trim_01",
+        scenario="benign",
+        target_service="http://webapp.default.svc.cluster.local",
+        client_pod="traffic-generator",
+        status="completed",
+        start_time_utc="2026-10-17T10:00:00.000Z",
+        end_time_utc="2026-10-17T10:00:10.000Z",
+        duration_seconds=10.0,
+    )
+    logger.save_session_manifest(manifest)
+
+    report = correlate_client_session("   trim_test_01   ", project_root=tmp_path, logger=logger)
+    assert report.session_id == "trim_test_01"
+    assert report.client_status == "completed"
+
+
+def test_correlation_rejects_invalid_inputs(tmp_path: Path) -> None:
+    # Non-string, non-manifest types must raise TypeError
+    for invalid_val in [None, 12345, 3.14, ["session_id"], {"session_id": "abc"}, True]:
+        with pytest.raises(TypeError, match="Unsupported session argument type"):
+            correlate_client_session(invalid_val, project_root=tmp_path)
+
+    # Empty or whitespace strings must raise ValueError
+    for empty_val in ["", "   ", "\t\n"]:
+        with pytest.raises(ValueError, match="session_id string cannot be empty"):
+            correlate_client_session(empty_val, project_root=tmp_path)
+
+    # Manifest with empty session_id must raise ValueError
+    bad_manifest = ClientSessionManifest(
+        session_id="",
+        experiment_id="exp_bad",
+        scenario="benign",
+        target_service="http://webapp.default.svc.cluster.local",
+        client_pod="traffic-generator",
+        status="completed",
+        start_time_utc="2026-10-17T10:00:00.000Z",
+    )
+    with pytest.raises(ValueError, match="ClientSessionManifest must have a non-empty string session_id"):
+        correlate_client_session(bad_manifest, project_root=tmp_path)
+
+    # Manifest with empty or invalid start_time_utc must raise ValueError
+    for bad_start in ["", "   ", "not-a-timestamp"]:
+        bad_manifest_start = ClientSessionManifest(
+            session_id="bad_start_sess",
+            experiment_id="exp_bad",
+            scenario="benign",
+            target_service="http://webapp.default.svc.cluster.local",
+            client_pod="traffic-generator",
+            status="completed",
+            start_time_utc=bad_start,
+        )
+        with pytest.raises(ValueError, match="start_time_utc"):
+            correlate_client_session(bad_manifest_start, project_root=tmp_path)
+
+    # Manifest with invalid end_time_utc must raise ValueError
+    bad_manifest_end = ClientSessionManifest(
+        session_id="bad_end_sess",
+        experiment_id="exp_bad",
+        scenario="benign",
+        target_service="http://webapp.default.svc.cluster.local",
+        client_pod="traffic-generator",
+        status="completed",
+        start_time_utc="2026-10-17T10:00:00.000Z",
+        end_time_utc="not-an-iso-end",
+    )
+    with pytest.raises(ValueError, match="end_time_utc"):
+        correlate_client_session(bad_manifest_end, project_root=tmp_path)
+
+
+def test_correlation_cache_invalidation_on_manifest_and_telemetry_mutation(tmp_path: Path) -> None:
+    clear_correlation_cache()
+    logger = ClientTelemetryLogger(tmp_path / "telemetry" / "data" / "client")
+    sess_id = "cache_mut_sess_01"
+
+    m1 = ClientSessionManifest(
+        session_id=sess_id,
+        experiment_id="exp_cache_mut",
+        scenario="network_burst",
+        target_service="http://webapp.default.svc.cluster.local",
+        client_pod="traffic-generator",
+        status="completed",
+        start_time_utc="2026-10-17T10:00:00.000Z",
+        end_time_utc="2026-10-17T10:00:10.000Z",
+        duration_seconds=10.0,
+        requests_attempted=10,
+        requests_completed=10,
+    )
+    logger.save_session_manifest(m1)
+
+    # 1. Initial report: 0 server events recorded
+    r1 = correlate_client_session(m1, project_root=tmp_path, logger=logger)
+    assert r1.server_network_events == 0
+    assert r1.requests_completed == 10
+
+    # Cached call returns exact same object
+    r1_cached = correlate_client_session(m1, project_root=tmp_path, logger=logger)
+    assert r1_cached is r1
+
+    # 2. Append new server network event -> telemetry signature change invalidates cache
+    net_dir = tmp_path / "telemetry" / "data" / "network"
+    net_dir.mkdir(parents=True, exist_ok=True)
+    net_file = net_dir / "network_events.jsonl"
+    ev = {"collector_timestamp": "2026-10-17T10:00:03.000Z", "type": "accept", "src": {"addr": "10.0.0.1", "port": 80}}
+    net_file.write_text(json.dumps(ev) + "\n", encoding="utf-8")
+
+    r2 = correlate_client_session(m1, project_root=tmp_path, logger=logger)
+    assert r2.server_network_events == 1
+    assert r2 is not r1
+
+    # 3. Update manifest -> manifest signature change invalidates cache
+    m2 = ClientSessionManifest(
+        session_id=sess_id,
+        experiment_id="exp_cache_mut",
+        scenario="network_burst",
+        target_service="http://webapp.default.svc.cluster.local",
+        client_pod="traffic-generator",
+        status="completed",
+        start_time_utc="2026-10-17T10:00:00.000Z",
+        end_time_utc="2026-10-17T10:00:10.000Z",
+        duration_seconds=10.0,
+        requests_attempted=25,
+        requests_completed=25,
+    )
+    logger.save_session_manifest(m2)
+
+    r3 = correlate_client_session(m2, project_root=tmp_path, logger=logger)
+    assert r3.requests_completed == 25
+    assert r3.server_network_events == 1
+    assert r3 is not r2
 
 
 def test_client_console_streamlit_app_renders() -> None:
