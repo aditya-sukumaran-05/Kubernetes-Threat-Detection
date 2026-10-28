@@ -195,6 +195,7 @@ class LiveTelemetryEngine:
         stale_threshold_seconds: float = STALE_THRESHOLD_SECONDS,
         clock_skew_tolerance_seconds: float = CLOCK_SKEW_TOLERANCE_SECONDS,
         prefer_collector_timestamp: bool = True,
+        preserve_sparse_streams: bool = False,
     ) -> None:
         self.detector = detector or ThreatDetector()
         self.network_path = Path(network_path)
@@ -209,6 +210,7 @@ class LiveTelemetryEngine:
         self.stale_threshold_seconds = float(stale_threshold_seconds)
         self.clock_skew_tolerance_seconds = float(clock_skew_tolerance_seconds)
         self.prefer_collector_timestamp = prefer_collector_timestamp
+        self.preserve_sparse_streams = preserve_sparse_streams
 
         # Incremental file tracking
         self._network_file_offset: int = 0
@@ -830,9 +832,14 @@ class LiveTelemetryEngine:
         if len(runtime_starts) > self.max_retained_windows:
             runtime_starts = runtime_starts[-self.max_retained_windows:]
 
-        all_starts = sorted(set(net_starts) | set(workload_starts) | set(runtime_starts))
-        if len(all_starts) > self.max_retained_windows:
-            all_starts = all_starts[-self.max_retained_windows:]
+        if self.preserve_sparse_streams:
+            # Guarantee sparse event streams (e.g. episodic runtime container executions or network attacks)
+            # are never starved or evicted by high-frequency continuous background metrics (e.g. workload samples).
+            all_starts = sorted(set(net_starts) | set(workload_starts) | set(runtime_starts))
+        else:
+            all_starts = sorted(set(net_starts) | set(workload_starts) | set(runtime_starts))
+            if len(all_starts) > self.max_retained_windows:
+                all_starts = all_starts[-self.max_retained_windows:]
 
         # Prune dropped windows from memory registry
         active_set = set(all_starts)

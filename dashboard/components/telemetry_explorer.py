@@ -57,9 +57,11 @@ def render_telemetry_explorer(
             network_path=resolved_net_path,
             workload_path=resolved_wl_path,
             runtime_path=resolved_rt_path,
+            preserve_sparse_streams=True,
         )
 
     engine: LiveTelemetryEngine = st.session_state[engine_key]
+    engine.preserve_sparse_streams = True
     records: list[LiveWindowRecord] = engine.process_live_telemetry(model_name=selected_model)
 
     if not records:
@@ -111,26 +113,65 @@ def render_telemetry_explorer(
         # Filter records based on controls
         filtered_records = []
         for r in records:
-            if only_active_net and not r.network_available:
+            if only_active_net and (not r.network_available or (r.network_features and r.network_features.get("network_event_count", 0) == 0)):
                 continue
-            if mod_filter == "Network Only (eBPF TCP)" and not r.network_available:
-                continue
-            elif mod_filter == "Workload Only (Metrics Server)" and not r.workload_available:
-                continue
-            elif mod_filter == "Runtime Only (trace_exec)" and not r.runtime_available:
-                continue
-            elif mod_filter == "Network + Workload (ML Benchmark)" and not r.is_fused:
-                continue
-            elif mod_filter == "Network + Runtime (Pairwise)" and not (r.network_available and r.runtime_available):
-                continue
-            elif mod_filter == "Runtime + Workload (Pairwise)" and not (r.runtime_available and r.workload_available):
-                continue
-            elif mod_filter == "Full Tri-Modal Fusion" and not (r.network_available and r.workload_available and r.runtime_available):
-                continue
+            if mod_filter == "Network Only (eBPF TCP)":
+                if not r.network_available:
+                    continue
+                if only_active_net and r.network_features and r.network_features.get("network_event_count", 0) == 0:
+                    continue
+            elif mod_filter == "Workload Only (Metrics Server)":
+                if not r.workload_available:
+                    continue
+            elif mod_filter == "Runtime Only (trace_exec)":
+                if not (r.runtime_available and len(r.runtime_events) > 0):
+                    continue
+            elif mod_filter == "Network + Workload (ML Benchmark)":
+                if not r.is_fused:
+                    continue
+            elif mod_filter == "Network + Runtime (Pairwise)":
+                if not (r.network_available and r.runtime_available and len(r.runtime_events) > 0):
+                    continue
+            elif mod_filter == "Runtime + Workload (Pairwise)":
+                if not (r.runtime_available and r.workload_available and len(r.runtime_events) > 0):
+                    continue
+            elif mod_filter == "Full Tri-Modal Fusion":
+                if not (r.network_available and r.workload_available and r.runtime_available and len(r.runtime_events) > 0):
+                    continue
 
             filtered_records.append(r)
 
-        # Convert to presentation rows
+        # Contextual Informational Banner based on selected telemetry
+        if mod_filter == "Network Only (eBPF TCP)":
+            st.info(f"🌐 **Network Telemetry**: Showing {len(filtered_records)} observation windows with eBPF TCP socket traces. Isolated to network-specific features and ML verdicts.")
+        elif mod_filter == "Workload Only (Metrics Server)":
+            st.info(f"⚡ **Workload Telemetry**: Showing {len(filtered_records)} observation windows with Metrics Server cgroup resource utilization. Isolated to CPU/Memory metrics and ML verdicts.")
+        elif mod_filter == "Runtime Only (trace_exec)":
+            if filtered_records:
+                st.info(f"🛡️ **Runtime Executions Captured**: Showing {len(filtered_records)} observation windows with active container process executions (eBPF trace_exec). Continuous idle periods without execve syscalls are filtered out.")
+            else:
+                st.warning("🛡️ **Runtime Probe Listening (Idle)**: No container process executions (execve) recorded in the current observation horizon. Container process telemetry triggers when commands are run inside the pod (e.g., via `kubectl exec` or the Client Attack Console).")
+        elif mod_filter == "Network + Workload (ML Benchmark)":
+            st.info(f"🌐⚡ **Network + Workload Fusion (NetSoft Benchmark)**: Showing {len(filtered_records)} observation windows with concurrent network socket traces and cgroup resource telemetry.")
+        elif mod_filter == "Network + Runtime (Pairwise)":
+            if filtered_records:
+                st.info(f"🌐🛡️ **Network + Runtime Correlation**: Showing {len(filtered_records)} observation windows with concurrent socket events and container process executions.")
+            else:
+                st.warning("🌐🛡️ **No Concurrent Network + Runtime Windows**: No observation windows currently contain both TCP socket traffic and container execve events simultaneously.")
+        elif mod_filter == "Runtime + Workload (Pairwise)":
+            if filtered_records:
+                st.info(f"🛡️⚡ **Runtime + Workload Correlation**: Showing {len(filtered_records)} observation windows with concurrent container process executions and cgroup resource telemetry.")
+            else:
+                st.warning("🛡️⚡ **No Concurrent Runtime + Workload Windows**: No observation windows currently contain both container process executions and resource telemetry simultaneously.")
+        elif mod_filter == "Full Tri-Modal Fusion":
+            if filtered_records:
+                st.info(f"🌐⚡🛡️ **Full Tri-Modal Fusion**: Showing {len(filtered_records)} observation windows with all 3 streams active: eBPF TCP Sockets + cgroup CPU/RAM + eBPF Process Executions.")
+            else:
+                st.warning("🌐⚡🛡️ **Tri-Modal Fusion Waiting for Concurrent Events**: No observation windows currently have all 3 streams (Network, Workload, and Runtime executions) concurrently active in the exact same 10-second window. To test tri-modal fusion live, execute commands inside the container while sending network traffic.")
+        else:
+            st.info(f"📋 **All Modalities**: Showing all {len(filtered_records)} synchronized observation windows across the observation horizon.")
+
+        # Convert to presentation rows with dynamic column projection per modality
         history_rows: list[dict[str, Any]] = []
         for idx, r in enumerate(filtered_records, start=1):
             net_res = r.network_inferences.get(selected_model)
@@ -166,24 +207,123 @@ def render_telemetry_explorer(
                 tri_text = f"Partial ({active_cnt}/3)"
 
             net_events = r.network_features.get("network_event_count", 0) if r.network_features else 0
+            net_rate = r.network_features.get("network_connection_rate", 0.0) if r.network_features else 0.0
+            cpu_m = r.workload_features.get("workload_cpu_millicores_mean", 0.0) if r.workload_features else 0.0
+            mem_m = r.workload_features.get("workload_memory_mib_mean", 0.0) if r.workload_features else 0.0
             rt_events = len(r.runtime_events) if r.runtime_events else 0
-            rt_summary = f"{rt_events} execs" if rt_events > 0 else "0 execs"
 
-            history_rows.append({
-                "Window": idx,
-                "Window Start (UTC)": r.window_start,
-                "Window End (UTC)": r.window_end,
-                "Network Verdict": net_text,
-                "Workload Verdict": wl_text,
-                "Runtime Verdict": rt_text,
-                "Net+WL Verdict": fus_text,
-                "Tri-Modal Verdict": tri_text,
-                "Net Events": net_events,
-                "Net Conn Rate": f"{r.network_features.get('network_connection_rate', 0.0):.2f}/s" if r.network_features else "0.00/s",
-                "CPU Mean": f"{r.workload_features.get('workload_cpu_millicores_mean', 0.0):.1f}m" if r.workload_features else "N/A",
-                "Runtime Execs": rt_summary,
-                "Affected Pod": r.affected_pods,
-            })
+            # Dynamic column projection: only show columns of the requested telemetry
+            if mod_filter == "Network Only (eBPF TCP)":
+                history_rows.append({
+                    "Window": idx,
+                    "Window Start (UTC)": r.window_start,
+                    "Window End (UTC)": r.window_end,
+                    "Network Verdict": net_text,
+                    "Net Events": net_events,
+                    "Net Conn Rate": f"{net_rate:.2f}/s",
+                    "TCP Accepts": r.network_features.get("network_accept_count", 0) if r.network_features else 0,
+                    "TCP Closes": r.network_features.get("network_close_count", 0) if r.network_features else 0,
+                    "TCP Errors": r.network_features.get("network_error_count", 0) if r.network_features else 0,
+                    "Affected Pod": r.affected_pods,
+                })
+            elif mod_filter == "Workload Only (Metrics Server)":
+                history_rows.append({
+                    "Window": idx,
+                    "Window Start (UTC)": r.window_start,
+                    "Window End (UTC)": r.window_end,
+                    "Workload Verdict": wl_text,
+                    "CPU Mean": f"{cpu_m:.1f}m" if r.workload_features else "N/A",
+                    "Memory Mean": f"{mem_m:.1f} MiB" if r.workload_features else "N/A",
+                    "Sample Count": r.workload_features.get("workload_sample_count", 0) if r.workload_features else 0,
+                    "Affected Pod": r.affected_pods,
+                })
+            elif mod_filter == "Runtime Only (trace_exec)":
+                top_bins = ", ".join(list(r.runtime_features.get("runtime_top_binaries", {}).keys())[:3]) if (r.runtime_features and r.runtime_features.get("runtime_top_binaries")) else "N/A"
+                history_rows.append({
+                    "Window": idx,
+                    "Window Start (UTC)": r.window_start,
+                    "Window End (UTC)": r.window_end,
+                    "Runtime Verdict": rt_text,
+                    "Process Execs": rt_events,
+                    "Root Execs (UID 0)": r.runtime_features.get("runtime_root_exec_count", 0) if r.runtime_features else 0,
+                    "Sensitive Binaries": r.runtime_features.get("runtime_sensitive_command_count", 0) if r.runtime_features else 0,
+                    "Observed Binaries": top_bins,
+                    "Affected Pod": r.affected_pods,
+                })
+            elif mod_filter == "Network + Workload (ML Benchmark)":
+                history_rows.append({
+                    "Window": idx,
+                    "Window Start (UTC)": r.window_start,
+                    "Window End (UTC)": r.window_end,
+                    "Net+WL Fusion Verdict": fus_text,
+                    "Network Verdict": net_text,
+                    "Workload Verdict": wl_text,
+                    "Net Events": net_events,
+                    "Net Conn Rate": f"{net_rate:.2f}/s",
+                    "CPU Mean": f"{cpu_m:.1f}m" if r.workload_features else "N/A",
+                    "Memory Mean": f"{mem_m:.1f} MiB" if r.workload_features else "N/A",
+                    "Affected Pod": r.affected_pods,
+                })
+            elif mod_filter == "Network + Runtime (Pairwise)":
+                history_rows.append({
+                    "Window": idx,
+                    "Window Start (UTC)": r.window_start,
+                    "Window End (UTC)": r.window_end,
+                    "Correlation Status": "Concurrent Socket + Exec",
+                    "Network Verdict": net_text,
+                    "Runtime Verdict": rt_text,
+                    "Net Events": net_events,
+                    "Net Conn Rate": f"{net_rate:.2f}/s",
+                    "Process Execs": rt_events,
+                    "Sensitive Binaries": r.runtime_features.get("runtime_sensitive_command_count", 0) if r.runtime_features else 0,
+                    "Affected Pod": r.affected_pods,
+                })
+            elif mod_filter == "Runtime + Workload (Pairwise)":
+                history_rows.append({
+                    "Window": idx,
+                    "Window Start (UTC)": r.window_start,
+                    "Window End (UTC)": r.window_end,
+                    "Correlation Status": "Concurrent CPU + Exec",
+                    "Runtime Verdict": rt_text,
+                    "Workload Verdict": wl_text,
+                    "Process Execs": rt_events,
+                    "CPU Mean": f"{cpu_m:.1f}m" if r.workload_features else "N/A",
+                    "Memory Mean": f"{mem_m:.1f} MiB" if r.workload_features else "N/A",
+                    "Affected Pod": r.affected_pods,
+                })
+            elif mod_filter == "Full Tri-Modal Fusion":
+                history_rows.append({
+                    "Window": idx,
+                    "Window Start (UTC)": r.window_start,
+                    "Window End (UTC)": r.window_end,
+                    "Tri-Modal Verdict": tri_text,
+                    "Net+WL Verdict": fus_text,
+                    "Network Verdict": net_text,
+                    "Workload Verdict": wl_text,
+                    "Runtime Verdict": rt_text,
+                    "Net Events": net_events,
+                    "CPU Mean": f"{cpu_m:.1f}m" if r.workload_features else "N/A",
+                    "Process Execs": rt_events,
+                    "Affected Pod": r.affected_pods,
+                })
+            else:
+                # All Modalities (Full view)
+                rt_summary = f"{rt_events} execs" if rt_events > 0 else "0 execs"
+                history_rows.append({
+                    "Window": idx,
+                    "Window Start (UTC)": r.window_start,
+                    "Window End (UTC)": r.window_end,
+                    "Network Verdict": net_text,
+                    "Workload Verdict": wl_text,
+                    "Runtime Verdict": rt_text,
+                    "Net+WL Verdict": fus_text,
+                    "Tri-Modal Verdict": tri_text,
+                    "Net Events": net_events,
+                    "Net Conn Rate": f"{net_rate:.2f}/s",
+                    "CPU Mean": f"{cpu_m:.1f}m" if r.workload_features else "N/A",
+                    "Runtime Execs": rt_summary,
+                    "Affected Pod": r.affected_pods,
+                })
 
         if search_query.strip():
             q = search_query.strip().lower()

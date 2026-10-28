@@ -550,6 +550,88 @@ def test_dashboard_telemetry_explorer_pairwise_and_trimodal_tabs() -> None:
     assert any("Telemetry Time-Series Visualizer" in s for s in subheaders)
 
 
+def test_dashboard_telemetry_explorer_modality_column_isolation() -> None:
+    """Verify that Telemetry Explorer isolates table columns and records to the selected modality."""
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    at.sidebar.radio[0].set_value(NAV_EXPLORER)
+    at.run(timeout=25)
+    assert not at.exception
+
+    # Find the modality filter selectbox
+    mod_select = [s for s in at.selectbox if s.label == "Filter by Modality:"]
+    assert len(mod_select) == 1
+
+    # 1. Filter by Network Only
+    mod_select[0].set_value("Network Only (eBPF TCP)")
+    at.run(timeout=25)
+    assert not at.exception
+    df_net = at.dataframe[0].value
+    if not df_net.empty:
+        cols = list(df_net.columns)
+        assert "Network Verdict" in cols
+        assert "Net Events" in cols
+        assert "Net Conn Rate" in cols
+        assert "Workload Verdict" not in cols
+        assert "CPU Mean" not in cols
+        assert "Runtime Verdict" not in cols
+        assert "Tri-Modal Verdict" not in cols
+
+    # 3. Filter by Runtime Only (re-fetch selectbox from fresh element tree)
+    mod_select_rt = [s for s in at.selectbox if s.label == "Filter by Modality:"]
+    assert len(mod_select_rt) == 1
+    mod_select_rt[0].set_value("Runtime Only (trace_exec)")
+    at.run(timeout=25)
+    assert not at.exception
+    df_rt = at.dataframe[0].value
+    if not df_rt.empty:
+        cols = list(df_rt.columns)
+        assert "Runtime Verdict" in cols
+        assert "Process Execs" in cols
+        assert "Root Execs (UID 0)" in cols
+        assert "Sensitive Binaries" in cols
+        assert "Network Verdict" not in cols
+        assert "Net Events" not in cols
+        assert "CPU Mean" not in cols
+        assert "Tri-Modal Verdict" not in cols
+
+    # 2. Filter by Workload Only (re-fetch selectbox from fresh element tree)
+    mod_select_wl = [s for s in at.selectbox if s.label == "Filter by Modality:"]
+    assert len(mod_select_wl) == 1
+    mod_select_wl[0].set_value("Workload Only (Metrics Server)")
+    at.run(timeout=25)
+    assert not at.exception
+    df_wl = at.dataframe[0].value
+    if not df_wl.empty:
+        cols = list(df_wl.columns)
+        assert "Workload Verdict" in cols
+        assert "CPU Mean" in cols
+        assert "Memory Mean" in cols
+        assert "Network Verdict" not in cols
+        assert "Net Events" not in cols
+        assert "Runtime Verdict" not in cols
+        assert "Tri-Modal Verdict" not in cols
+
+    # 3. Filter by Runtime Only (re-fetch selectbox from fresh element tree)
+    mod_select_rt = [s for s in at.selectbox if s.label == "Filter by Modality:"]
+    assert len(mod_select_rt) == 1
+    mod_select_rt[0].set_value("Runtime Only (trace_exec)")
+    at.run(timeout=25)
+    assert not at.exception
+    df_rt = at.dataframe[0].value
+    if not df_rt.empty:
+        cols = list(df_rt.columns)
+        assert "Runtime Verdict" in cols
+        assert "Process Execs" in cols
+        assert "Root Execs (UID 0)" in cols
+        assert "Sensitive Binaries" in cols
+        assert "Network Verdict" not in cols
+        assert "Net Events" not in cols
+        assert "CPU Mean" not in cols
+        assert "Tri-Modal Verdict" not in cols
+
+
 def test_dashboard_runtime_events_time_range_filter() -> None:
     """Verify that Runtime Events view supports time-range filtering without exceptions."""
     at = AppTest.from_file("dashboard/app.py")
