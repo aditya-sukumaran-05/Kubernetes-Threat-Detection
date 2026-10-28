@@ -1,5 +1,12 @@
 # Machine Learning-Based Threat Detection Framework for Kubernetes
 
+> **Quick start (demo mode — no Kubernetes required):**
+> ```powershell
+> pip install -r requirements.txt
+> python start.py both
+> ```
+> Opens the SOC dashboard at **http://127.0.0.1:8501** and the client console at **http://127.0.0.1:8502**.
+
 This repository is a reproducible research prototype for assessing how
 Kubernetes network and workload telemetry affect detection performance. It
 does not claim telemetry fusion as a novel idea. Its focus is controlled data
@@ -99,6 +106,119 @@ The framework produces and maintains distinct evaluation benchmarks across devel
   - Point-in-time campaign execution snapshots preserved for historical verification.
 - **Note on Discontinued Paths:**
   - `results/metrics/ablation_study.csv` does not exist; all cross-modality ablation references should consult `results/loso/loso_aggregate_comparison.csv`.
+
+## Startup, Shutdown & Troubleshooting
+
+### Orchestrated 3-Step Startup Architecture
+
+The primary launcher (`start.py`) orchestrates the complete Kubernetes threat detection research stack in three sequential stages:
+
+```
+[Prerequisites Check]
+        ↓
+1. Minikube Cluster Initialization & Health Verification
+   • Minikube cluster running & context set to 'minikube'
+   • Node condition Ready
+   • Nginx webapp deployment & NodePort service (port 80) Ready
+   • Metrics Server addon enabled & rolled out
+   • Inspektor Gadget v0.55.1 verified
+   • Traffic-generator pod Running
+        ↓
+2. Telemetry Collectors Initialization (Background)
+   • Network Collector (eBPF TCP)               → telemetry/data/network/network_events.jsonl
+   • Workload Collector (Metrics Server)        → telemetry/data/workload_metrics.csv
+   • Runtime Collector (eBPF trace_exec)        → telemetry/data/runtime/runtime_events.jsonl
+   • Duplicate process prevention via PID files & psutil process inspection
+        ↓
+3. Dual-Console Dashboards Launch
+   • SOC Threat Detection Dashboard             → http://127.0.0.1:8501
+   • Client Attack Simulation Console           → http://127.0.0.1:8502
+```
+
+### Prerequisites
+
+| Requirement | Version | Notes |
+|---|---|---|
+| Python | ≥ 3.11 | Tested on 3.13.9 |
+| All packages | see `requirements.txt` | Install with `pip install -r requirements.txt` |
+| Minikube | ≥ 1.39 | Required for live cluster and collector execution |
+| Inspektor Gadget | v0.55.1 | Required for kernel eBPF socket and execution tracing |
+
+### Setup (First Time)
+
+```powershell
+# 1. Clone repository and install dependencies
+git clone https://github.com/aditya-sukumaran-05/Kubernetes-Threat-Detection.git
+Set-Location Kubernetes-Threat-Detection
+pip install -r requirements.txt
+
+# 2. Verify all prerequisites
+python start.py check
+```
+
+### Startup Commands
+
+```powershell
+# ── Full Stack (Minikube -> Collectors -> Both Dashboards) [Recommended] ──
+python start.py
+
+# ── Launch Only SOC Threat Detection Dashboard (Port 8501) ──
+python start.py dashboard
+
+# ── Launch Only Client Attack Simulation Console (Port 8502) ──
+python start.py client
+
+# ── Offline Demo Mode (Skips Minikube & Collectors; No Cluster Required) ──
+python start.py demo
+# or: python start.py --skip-k8s
+
+# ── Sub-component Operations ──
+python start.py k8s            # Initialize Minikube lab environment only
+python start.py collectors     # Initialize Minikube & telemetry collectors only
+python start.py check          # Run prerequisite validation only
+```
+
+The launcher records active process IDs in `.launcher_pids`. Re-running startup is completely idempotent: already-running collectors and dashboards are detected and reused rather than duplicated.
+
+### Collector Logs
+
+Background collector stdout and stderr are continuously streamed to:
+- `telemetry/data/network_collector.log`
+- `telemetry/data/workload_collector.log`
+- `telemetry/data/runtime_collector.log`
+
+### Clean Shutdown
+
+```powershell
+# Gracefully stop all launcher-started processes (dashboards + collectors)
+python start.py stop
+```
+
+Pressing `Ctrl+C` in the launcher terminal also triggers a clean shutdown of all managed child processes.
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `ModuleNotFoundError` on start | Missing dependency | `pip install -r requirements.txt` |
+| Port 8501 or 8502 already in use | Stale dashboard process | `python start.py stop`, then retry |
+| Collector fails to start | Cluster not ready or Gadget missing | Run `python start.py k8s` to diagnose cluster state |
+| Minikube not starting | Docker Desktop not running | Start Docker Desktop, then retry `python start.py` |
+| Dashboard shows no models | Model joblib files missing | Run `python -m ml.run_all --project-root .` to train |
+| `start.py stop` says "nothing to stop" | No PID file | Processes were not launched via `start.py` |
+
+For direct fallback without the launcher:
+```powershell
+# SOC Dashboard
+python -m streamlit run dashboard/app.py --server.port 8501
+
+# Client Console
+python -m streamlit run client_console/app.py --server.port 8502
+```
+
+For the emergency quick-fix table, see **DEMO_RUNBOOK.md § 4**.
+
+---
 
 ## Threat Detection Dashboard
 

@@ -26,3 +26,14 @@ telemetry/data/.network_collector.pid
 
 # Streamlit secrets
 .streamlit/secrets.toml
+
+# Diary and capstone submission documents (personal, not project code)
+SWE3004_*.docx
+SWE3004_*.csv
+
+# Launcher PID file
+.launcher_pids
+
+# Collector runtime logs
+telemetry/data/*_collector.log
+telemetry/data/*.log
