@@ -21,9 +21,12 @@ Subcommands:
   python start.py stop       — gracefully stop all recorded launcher processes (dashboards + collectors)
 
 Flags:
-  --skip-k8s, --no-k8s       — skip Minikube cluster initialization
-  --skip-collectors          — skip telemetry collectors initialization
-  --demo                     — alias for --skip-k8s --skip-collectors
+  --windows, --windowed, --separate-windows  — open each collector and dashboard in a separate terminal window
+                                               for live telemetry monitoring (default on Windows interactive terminal)
+  --background, --headless, --no-windows     — run collectors detached in background without separate windows
+  --skip-k8s, --no-k8s                       — skip Minikube cluster initialization
+  --skip-collectors                          — skip telemetry collectors initialization
+  --demo                                     — alias for --skip-k8s --skip-collectors
 
 Process state is persisted to `.launcher_pids` for clean, isolated shutdown.
 """
@@ -481,8 +484,8 @@ def _is_collector_running(spec_name: str) -> tuple[bool, int | None]:
     return False, None
 
 
-def _launch_collector(spec_name: str) -> subprocess.Popen | None:
-    """Launch a telemetry collector in the background with output logged to file."""
+def _launch_collector(spec_name: str, separate_windows: bool = True) -> subprocess.Popen | None:
+    """Launch a telemetry collector in a dedicated terminal window or detached background."""
     spec = COLLECTOR_SPECS[spec_name]
     is_running, pid = _is_collector_running(spec_name)
     if is_running:
@@ -490,9 +493,8 @@ def _launch_collector(spec_name: str) -> subprocess.Popen | None:
         return None
 
     spec["log_file"].parent.mkdir(parents=True, exist_ok=True)
-    log_handle = spec["log_file"].open("a", encoding="utf-8")
 
-    cmd = [sys.executable, str(spec["script"])] + spec["args"]
+    cmd = [sys.executable, "-u", str(spec["script"])] + spec["args"]
 
     env = os.environ.copy()
     env["PYTHONPATH"] = str(PROJECT_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
@@ -502,15 +504,26 @@ def _launch_collector(spec_name: str) -> subprocess.Popen | None:
             env["PATH"] = f"{cand}{os.pathsep}{env.get('PATH', '')}"
 
     creationflags = 0
-    if sys.platform == "win32":
-        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200) | getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+    stdout_target = None
+    stderr_target = None
+
+    if separate_windows and sys.platform == "win32":
+        creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0x00000010)
+        stdout_target = None
+        stderr_target = None
+    else:
+        if sys.platform == "win32":
+            creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200) | getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+        log_handle = spec["log_file"].open("a", encoding="utf-8")
+        stdout_target = log_handle
+        stderr_target = subprocess.STDOUT
 
     try:
         proc = subprocess.Popen(
             cmd,
             cwd=str(PROJECT_ROOT),
-            stdout=log_handle,
-            stderr=subprocess.STDOUT,
+            stdout=stdout_target,
+            stderr=stderr_target,
             text=True,
             env=env,
             creationflags=creationflags,
@@ -520,14 +533,15 @@ def _launch_collector(spec_name: str) -> subprocess.Popen | None:
             _fail("COLL", f"Failed to start {spec['label']} (exit code {proc.poll()})")
             _info(f"Check log: {spec['log_file'].relative_to(PROJECT_ROOT)}")
             return None
-        _ok("COLL", f"Started {spec['label']} (PID {proc.pid})")
+        mode_str = "in new terminal window" if (separate_windows and sys.platform == "win32") else "in background"
+        _ok("COLL", f"Started {spec['label']} {mode_str} (PID {proc.pid})")
         return proc
     except Exception as exc:
         _fail("COLL", f"Error launching {spec['label']}: {exc}")
         return None
 
 
-def init_collectors() -> dict[str, int]:
+def init_collectors(separate_windows: bool = True) -> dict[str, int]:
     """
     Step 2: Ensure all three telemetry collectors are running:
       - network_collector (Inspektor Gadget eBPF TCP)
@@ -536,7 +550,8 @@ def init_collectors() -> dict[str, int]:
     """
     _ensure_gadget_path()
     print()
-    _info("Step 2/3: Initializing telemetry collectors...")
+    mode_desc = "separate terminal windows" if (separate_windows and sys.platform == "win32") else "background"
+    _info(f"Step 2/3: Initializing telemetry collectors ({mode_desc})...")
 
     # Ensure output directories exist
     (PROJECT_ROOT / "telemetry" / "data" / "network").mkdir(parents=True, exist_ok=True)
@@ -548,11 +563,11 @@ def init_collectors() -> dict[str, int]:
     for spec_name, spec in COLLECTOR_SPECS.items():
         is_running, existing_pid = _is_collector_running(spec_name)
         if is_running and existing_pid:
-            _coll(f"{spec['label']} already running (PID {existing_pid})  ✓")
+            _coll(f"{spec['label']} already running (PID {existing_pid})  [OK]")
             active[spec_name] = existing_pid
             pids[spec_name] = existing_pid
         else:
-            proc = _launch_collector(spec_name)
+            proc = _launch_collector(spec_name, separate_windows=separate_windows)
             if proc is not None and proc.pid:
                 active[spec_name] = proc.pid
                 pids[spec_name] = proc.pid
@@ -570,7 +585,7 @@ def init_collectors() -> dict[str, int]:
 def _streamlit_cmd(script: Path, port: int) -> list[str]:
     """Build the command list to launch a Streamlit app."""
     return [
-        sys.executable, "-m", "streamlit", "run",
+        sys.executable, "-u", "-m", "streamlit", "run",
         str(script),
         "--server.port", str(port),
         "--server.headless", "true",
@@ -578,7 +593,13 @@ def _streamlit_cmd(script: Path, port: int) -> list[str]:
     ]
 
 
-def _launch_process(name: str, script: Path, port: int, url: str) -> subprocess.Popen | None:
+def _launch_process(
+    name: str,
+    script: Path,
+    port: int,
+    url: str,
+    separate_windows: bool = True,
+) -> subprocess.Popen | None:
     """Launch a Streamlit subprocess with idempotency check."""
     pids = _load_pids()
 
@@ -592,9 +613,14 @@ def _launch_process(name: str, script: Path, port: int, url: str) -> subprocess.
             _warn("psutil not available; cannot verify existing PID — launching anyway")
 
     cmd = _streamlit_cmd(script, port)
+    creationflags = 0
+    if separate_windows and sys.platform == "win32":
+        creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0x00000010)
+
     try:
-        proc = subprocess.Popen(cmd, cwd=str(PROJECT_ROOT))
-        _start(f"{name:<20} →  {url}")
+        proc = subprocess.Popen(cmd, cwd=str(PROJECT_ROOT), creationflags=creationflags)
+        mode_str = " (new window)" if (separate_windows and sys.platform == "win32") else ""
+        _start(f"{name:<20} →  {url}{mode_str}")
         return proc
     except FileNotFoundError:
         _fail("START", f"Could not launch {name} — is streamlit installed?")
@@ -604,7 +630,7 @@ def _launch_process(name: str, script: Path, port: int, url: str) -> subprocess.
         return None
 
 
-def cmd_launch(targets: list[str]) -> None:
+def cmd_launch(targets: list[str], separate_windows: bool = True) -> None:
     """Launch one or both Streamlit apps, monitor, and wait for Ctrl+C."""
     # Ensure key directories exist
     for d in [
@@ -620,14 +646,14 @@ def cmd_launch(targets: list[str]) -> None:
 
     # Dashboard
     if "dashboard" in targets:
-        proc = _launch_process("dashboard", DASHBOARD_SCRIPT, DASHBOARD_PORT, DASHBOARD_URL)
+        proc = _launch_process("dashboard", DASHBOARD_SCRIPT, DASHBOARD_PORT, DASHBOARD_URL, separate_windows=separate_windows)
         if proc is not None:
             _RUNNING_PROCS["dashboard"] = proc
             pids["dashboard"] = proc.pid
 
     # Client console
     if "client" in targets:
-        proc = _launch_process("client", CLIENT_SCRIPT, CLIENT_PORT, CLIENT_URL)
+        proc = _launch_process("client", CLIENT_SCRIPT, CLIENT_PORT, CLIENT_URL, separate_windows=separate_windows)
         if proc is not None:
             _RUNNING_PROCS["client"] = proc
             pids["client"] = proc.pid
@@ -644,15 +670,18 @@ def cmd_launch(targets: list[str]) -> None:
     time.sleep(LAUNCH_SETTLE_SECS)
 
     print()
-    print("  ┌─ Running ──────────────────────────────────────────┐")
+    print("  ┌─ Running Stack ────────────────────────────────────┐")
     if "dashboard" in targets:
-        print(f"  │  SOC Dashboard   →  {DASHBOARD_URL:<32}│")
+        mode_str = "[Window]" if (separate_windows and sys.platform == "win32") else "[Bg]"
+        print(f"  │  SOC Dashboard   →  {DASHBOARD_URL:<25} {mode_str:>8} │")
     if "client" in targets:
-        print(f"  │  Client Console  →  {CLIENT_URL:<32}│")
+        mode_str = "[Window]" if (separate_windows and sys.platform == "win32") else "[Bg]"
+        print(f"  │  Client Console  →  {CLIENT_URL:<25} {mode_str:>8} │")
     for spec_name, spec in COLLECTOR_SPECS.items():
         if spec_name in pids and _pid_is_running(pids[spec_name]):
             lbl = spec["label"].split("(")[0].strip()
-            print(f"  │  {lbl:<16}→  Active (PID {pids[spec_name]}){' ' * (17 - len(str(pids[spec_name])))}│")
+            mode_lbl = "[Window]" if (separate_windows and sys.platform == "win32") else "[Bg]"
+            print(f"  │  {lbl:<16}→  Active PID {pids[spec_name]:<10} {mode_lbl:>8} │")
     print("  └────────────────────────────────────────────────────┘")
     print()
 
@@ -677,33 +706,42 @@ def cmd_launch(targets: list[str]) -> None:
 # Graceful Shutdown
 # ──────────────────────────────────────────────────────────────────────────────
 def _terminate_pid(name: str, pid: int) -> None:
-    """Gracefully terminate a process by PID."""
-    if not _PSUTIL_AVAILABLE:
+    """Gracefully terminate a process and its children by PID."""
+    if _PSUTIL_AVAILABLE:
         try:
-            if sys.platform == "win32":
-                subprocess.call(["taskkill", "/PID", str(pid), "/F", "/T"],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            else:
-                os.kill(pid, signal.SIGTERM)
-            _info(f"Sent termination signal to {name} (PID {pid})")
-        except (ProcessLookupError, PermissionError, OSError) as exc:
-            _warn(f"Could not signal {name} (PID {pid}): {exc}")
-        return
+            parent = _psutil.Process(pid)
+            children = parent.children(recursive=True)
+            for child in children:
+                try:
+                    child.terminate()
+                except (_psutil.NoSuchProcess, _psutil.AccessDenied):
+                    pass
+            parent.terminate()
+            gone, alive = _psutil.wait_procs(children + [parent], timeout=SIGTERM_WAIT_SECS)
+            for p in alive:
+                try:
+                    p.kill()
+                except (_psutil.NoSuchProcess, _psutil.AccessDenied):
+                    pass
+            _info(f"Stopped {name} (PID {pid})")
+            return
+        except _psutil.NoSuchProcess:
+            _info(f"{name} (PID {pid}) was not running — nothing to stop")
+            return
+        except _psutil.AccessDenied as exc:
+            _warn(f"Access denied when stopping {name} (PID {pid}): {exc}")
+        except Exception:
+            pass
 
     try:
-        proc = _psutil.Process(pid)
-        proc.terminate()
-        try:
-            proc.wait(timeout=SIGTERM_WAIT_SECS)
-            _info(f"Stopped {name} (PID {pid})")
-        except _psutil.TimeoutExpired:
-            _warn(f"{name} did not exit after {SIGTERM_WAIT_SECS}s — force-killing")
-            proc.kill()
-            _info(f"Force-killed {name} (PID {pid})")
-    except _psutil.NoSuchProcess:
-        _info(f"{name} (PID {pid}) was not running — nothing to stop")
-    except _psutil.AccessDenied as exc:
-        _warn(f"Access denied when stopping {name} (PID {pid}): {exc}")
+        if sys.platform == "win32":
+            subprocess.call(["taskkill", "/PID", str(pid), "/F", "/T"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            os.kill(pid, signal.SIGTERM)
+        _info(f"Sent termination signal to {name} (PID {pid})")
+    except (ProcessLookupError, PermissionError, OSError) as exc:
+        _warn(f"Could not signal {name} (PID {pid}): {exc}")
 
 
 def _shutdown(procs: dict[str, subprocess.Popen]) -> None:
@@ -712,12 +750,7 @@ def _shutdown(procs: dict[str, subprocess.Popen]) -> None:
     _info("Shutting down launcher processes...")
     for name, proc in procs.items():
         if proc is not None and proc.poll() is None:
-            _info(f"Terminating {name} (PID {proc.pid})")
-            proc.terminate()
-            try:
-                proc.wait(timeout=SIGTERM_WAIT_SECS)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+            _terminate_pid(name, proc.pid)
     _delete_pid_file()
     _info("Done.")
 
@@ -789,6 +822,20 @@ def main() -> None:
         action="store_true",
         help="Skip telemetry collectors initialization",
     )
+    parser.add_argument(
+        "--windows", "--windowed", "--separate-windows",
+        dest="windows",
+        action="store_true",
+        default=None,
+        help="Open each collector and dashboard in a separate terminal window for real-time monitoring (default on Windows)",
+    )
+    parser.add_argument(
+        "--background", "--headless", "--no-windows",
+        dest="background",
+        action="store_true",
+        default=False,
+        help="Run collectors detached in the background without separate windows (silent/CI mode)",
+    )
 
     args = parser.parse_args()
 
@@ -812,6 +859,14 @@ def main() -> None:
     skip_k8s = args.skip_k8s or (args.command == "demo")
     skip_collectors = args.skip_collectors or (args.command == "demo") or (args.command == "k8s")
 
+    # Determine windowed terminal monitoring mode
+    if args.background:
+        separate_windows = False
+    elif args.windows is not None:
+        separate_windows = args.windows
+    else:
+        separate_windows = (sys.platform == "win32" and not os.environ.get("CI"))
+
     # Step 1: Initialize Minikube cluster
     if not skip_k8s:
         k8s_ok = init_minikube_cluster()
@@ -828,12 +883,13 @@ def main() -> None:
 
     # Step 2: Initialize Telemetry Collectors
     if not skip_collectors:
-        init_collectors()
+        init_collectors(separate_windows=separate_windows)
     else:
         _info("Skipping telemetry collectors initialization")
 
     if args.command == "collectors":
-        _ok("COLL", "Telemetry collectors initialized. Exiting.")
+        mode_str = "separate terminal windows" if separate_windows else "background"
+        _ok("COLL", f"Telemetry collectors initialized in {mode_str}. Run 'python start.py stop' to terminate.")
         return
 
     # Step 3: Launch Dashboards
@@ -846,7 +902,7 @@ def main() -> None:
 
     print()
     _info(f"Step 3/3: Launching {', '.join(targets)} dashboard(s)...")
-    cmd_launch(targets)
+    cmd_launch(targets, separate_windows=separate_windows)
 
 
 if __name__ == "__main__":

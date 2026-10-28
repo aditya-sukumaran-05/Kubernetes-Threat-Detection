@@ -162,6 +162,12 @@ def main() -> None:
     if not file_exists:
         with open(args.output, "w", newline="") as file:
             csv.writer(file).writerow(["timestamp", "pod", "cpu_millicores", "memory_mib", "label"])
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.kernel32.SetConsoleTitleW("K8s Sentinel — Workload Telemetry Collector (Metrics Server)")
+        except Exception:
+            pass
     print("Starting Kubernetes workload telemetry collector; dynamically discovering app=webapp.")
     candidate_pids = [
         os.path.join(os.path.dirname(args.output) or ".", ".workload_collector.pid"),

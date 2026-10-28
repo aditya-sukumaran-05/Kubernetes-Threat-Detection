@@ -27,6 +27,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+if sys.platform == "win32":
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleTitleW("K8s Sentinel — Client Attack Console (Port 8502)")
+    except Exception:
+        pass
+
 import importlib
 import experiments.traffic_simulator
 

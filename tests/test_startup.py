@@ -254,3 +254,24 @@ class TestCollectorOrchestration:
         assert "--skip-k8s" in content
         assert "--skip-collectors" in content
 
+    def test_cli_accepts_window_monitoring_flags(self):
+        """start.py CLI must support separate window monitoring flags."""
+        content = _START.read_text(encoding="utf-8")
+        assert "--windows" in content
+        assert "--windowed" in content
+        assert "--separate-windows" in content
+        assert "--background" in content
+        assert "--headless" in content
+
+    def test_launch_helpers_support_separate_windows(self, start_mod):
+        """Verify launch helpers accept separate_windows argument."""
+        import inspect
+        sig_coll = inspect.signature(start_mod._launch_collector)
+        assert "separate_windows" in sig_coll.parameters
+        sig_proc = inspect.signature(start_mod._launch_process)
+        assert "separate_windows" in sig_proc.parameters
+        sig_cmd = inspect.signature(start_mod.cmd_launch)
+        assert "separate_windows" in sig_cmd.parameters
+        sig_init = inspect.signature(start_mod.init_collectors)
+        assert "separate_windows" in sig_init.parameters
+

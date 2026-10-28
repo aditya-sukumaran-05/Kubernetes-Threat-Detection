@@ -172,6 +172,14 @@ python start.py client
 python start.py demo
 # or: python start.py --skip-k8s
 
+# ── Live Terminal Telemetry Monitoring (Default on Windows) ──
+# Opens separate, titled terminal windows for each collector and dashboard:
+python start.py
+
+# ── Headless / Background Mode (Silent CI/Server Mode) ──
+# Runs collectors detached in the background without spawning terminal windows:
+python start.py --background
+
 # ── Sub-component Operations ──
 python start.py k8s            # Initialize Minikube lab environment only
 python start.py collectors     # Initialize Minikube & telemetry collectors only
@@ -180,9 +188,17 @@ python start.py check          # Run prerequisite validation only
 
 The launcher records active process IDs in `.launcher_pids`. Re-running startup is completely idempotent: already-running collectors and dashboards are detected and reused rather than duplicated.
 
-### Collector Logs
+### Real-Time Terminal Telemetry Monitoring
 
-Background collector stdout and stderr are continuously streamed to:
+By default on Windows interactive terminals (or via `--windows`), each component opens in its own dedicated, titled terminal window so you can monitor the live telemetry streams side-by-side with the web dashboards:
+- **`K8s Sentinel — Network Telemetry Collector`**: Streams real-time eBPF TCP connection events (`connect`, `accept`, `close`).
+- **`K8s Sentinel — Workload Telemetry Collector`**: Streams live pod CPU (millicores) and Memory (MiB) utilization ticks every 5 seconds.
+- **`K8s Sentinel — Runtime Telemetry Collector`**: Streams real-time pod process execution events (`exec`, user, comm, PID).
+- **`K8s Sentinel — SOC Threat Dashboard`**: Streamlit server output for the SOC detection console (`http://127.0.0.1:8501`).
+- **`K8s Sentinel — Client Attack Console`**: Streamlit server output for attack generation (`http://127.0.0.1:8502`).
+- **Main Launcher Terminal**: Central orchestration dashboard displaying overall stack health, URLs, and PID tracking.
+
+When running in `--background` or `--headless` mode, stdout and stderr are continuously streamed to:
 - `telemetry/data/network_collector.log`
 - `telemetry/data/workload_collector.log`
 - `telemetry/data/runtime_collector.log`

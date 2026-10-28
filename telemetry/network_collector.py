@@ -85,6 +85,12 @@ def main() -> None:
         selector=args.selector,
         custom_bin=args.gadget_bin,
     )
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.kernel32.SetConsoleTitleW("K8s Sentinel — Network Telemetry Collector (eBPF TCP)")
+        except Exception:
+            pass
     print("Starting Kubernetes network telemetry collector. Press Ctrl+C to stop.", flush=True)
     print(f"Using Gadget command: {' '.join(command)}", flush=True)
     try:
@@ -93,6 +99,7 @@ def main() -> None:
     except Exception:
         pass
 
+    subprocess_window_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) if sys.platform == "win32" else 0
     try:
         with open(args.output, "a", encoding="utf-8") as file:
 
@@ -103,6 +110,7 @@ def main() -> None:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
+                creationflags=subprocess_window_flags,
             )
 
             try:
