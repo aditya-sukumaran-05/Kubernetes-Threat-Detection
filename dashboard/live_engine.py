@@ -176,6 +176,11 @@ class LiveWindowRecord:
         """True if network, workload, and runtime telemetry are available."""
         return self.network_available and self.workload_available and self.runtime_available
 
+    @property
+    def is_tri_modal(self) -> bool:
+        """Alias for is_full_fused."""
+        return self.is_full_fused
+
 
 class LiveTelemetryEngine:
     """Consumes live telemetry streams incrementally and manages window-level inference."""

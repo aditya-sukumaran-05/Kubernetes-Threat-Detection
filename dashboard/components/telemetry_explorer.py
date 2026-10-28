@@ -135,10 +135,19 @@ def render_telemetry_explorer(
         for idx, r in enumerate(filtered_records, start=1):
             net_res = r.network_inferences.get(selected_model)
             wl_res = r.workload_inferences.get(selected_model)
+            rt_res = r.runtime_inferences.get(selected_model)
             fus_res = r.fusion_inferences.get(selected_model)
+            tri_res = r.full_fusion_inferences.get(selected_model)
 
             net_text = f"{net_res.predicted_label.upper()} ({format_probability(net_res.attack_probability)})" if net_res and net_res.attack_probability is not None else ("EVALUATED" if net_res else "Idle")
             wl_text = f"{wl_res.predicted_label.upper()} ({format_probability(wl_res.attack_probability)})" if wl_res and wl_res.attack_probability is not None else ("EVALUATED" if wl_res else "No Metrics")
+            if r.runtime_available and rt_res:
+                rt_text = f"{rt_res.predicted_label.upper()} ({format_probability(rt_res.attack_probability)})" if rt_res.attack_probability is not None else "EVALUATED"
+            elif not r.runtime_available or len(r.runtime_events) == 0:
+                rt_text = "No Execs (Idle)"
+            else:
+                rt_text = "Pending"
+
             if r.is_fused and fus_res:
                 fus_text = f"{fus_res.predicted_label.upper()} ({format_probability(fus_res.attack_probability)})" if fus_res.attack_probability is not None else "EVALUATED"
             elif not r.network_available:
@@ -147,6 +156,14 @@ def render_telemetry_explorer(
                 fus_text = "Missing Workload"
             else:
                 fus_text = "Pending"
+
+            if tri_res:
+                tri_text = f"{tri_res.predicted_label.upper()} ({format_probability(tri_res.attack_probability)})" if tri_res.attack_probability is not None else "EVALUATED"
+            elif r.is_tri_modal:
+                tri_text = "Pending"
+            else:
+                active_cnt = sum([r.network_available, r.workload_available, r.runtime_available])
+                tri_text = f"Partial ({active_cnt}/3)"
 
             net_events = r.network_features.get("network_event_count", 0) if r.network_features else 0
             rt_events = len(r.runtime_events) if r.runtime_events else 0
@@ -158,7 +175,9 @@ def render_telemetry_explorer(
                 "Window End (UTC)": r.window_end,
                 "Network Verdict": net_text,
                 "Workload Verdict": wl_text,
-                "Fusion Verdict": fus_text,
+                "Runtime Verdict": rt_text,
+                "Net+WL Verdict": fus_text,
+                "Tri-Modal Verdict": tri_text,
                 "Net Events": net_events,
                 "Net Conn Rate": f"{r.network_features.get('network_connection_rate', 0.0):.2f}/s" if r.network_features else "0.00/s",
                 "CPU Mean": f"{r.workload_features.get('workload_cpu_millicores_mean', 0.0):.1f}m" if r.workload_features else "N/A",
@@ -312,6 +331,14 @@ def render_telemetry_explorer(
             fus_res = r.fusion_inferences.get(selected_model) if r.is_fused else None
             fus_verdict = f"{fus_res.predicted_label.upper()} ({format_probability(fus_res.attack_probability)})" if fus_res else ("Incomplete Fusion" if not r.is_fused else "Pending")
 
+            tri_res = r.full_fusion_inferences.get(selected_model)
+            if tri_res:
+                tri_verdict = f"{tri_res.predicted_label.upper()} ({format_probability(tri_res.attack_probability)})" if tri_res.attack_probability is not None else "EVALUATED"
+            elif r.is_tri_modal:
+                tri_verdict = "Pending"
+            else:
+                tri_verdict = f"Incomplete ({streams_active}/3)"
+
             tri_rows.append({
                 "Window": idx,
                 "Window Start (UTC)": r.window_start,
@@ -322,6 +349,7 @@ def render_telemetry_explorer(
                 "Process Execs": r_ev,
                 "Sensitive Binaries": r_sec,
                 "Net+WL ML Verdict": fus_verdict,
+                "Tri-Modal ML Verdict": tri_verdict,
                 "Affected Pod": r.affected_pods,
             })
 

@@ -32,7 +32,7 @@
     "random_seed": 42,
     "output_dir": "results/rt_wl"
   },
-  "dataset_sha256": "1c3479ac1d097169112c2d5a9033315850d38d9d92cc1e837a0b09336e75787c",
+  "dataset_sha256": "6494c99c304f181d3dc6d84efd60ee51c1b481d8148d9b2a75921f5e1a95af10",
   "python_version": "3.13.9",
   "scikit_learn_version": "1.7.2",
   "results": [
@@ -67,31 +67,31 @@
         "20260920T095700Z_workload_attack_28c39209"
       ],
       "training_class_counts": {
-        "attack": 28,
-        "normal": 55
+        "attack": 29,
+        "normal": 54
       },
       "test_class_counts": {
-        "attack": 7,
-        "normal": 4
+        "attack": 6,
+        "normal": 5
       },
-      "training_time_seconds": 0.15143240000179503,
-      "accuracy": 0.5454545454545454,
-      "precision": 0.6666666666666666,
-      "recall": 0.5714285714285714,
-      "f1": 0.6153846153846154,
-      "false_positive_rate": 0.5,
+      "training_time_seconds": 0.1821427999821026,
+      "accuracy": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "false_positive_rate": 0.0,
       "confusion_matrix": [
         [
-          2,
-          2
+          5,
+          0
         ],
         [
-          3,
-          4
+          0,
+          6
         ]
       ],
-      "inference_time_seconds": 0.00595380000595469,
-      "inference_time_per_sample_seconds": 0.0005412545459958809,
+      "inference_time_seconds": 0.005776400008471683,
+      "inference_time_per_sample_seconds": 0.0005251272734974257,
       "detection_latency_seconds": null,
       "detection_latency_note": "Unavailable: no ground-truth attack onset event is available in the held-out data."
     },
@@ -126,31 +126,31 @@
         "20260920T095700Z_workload_attack_28c39209"
       ],
       "training_class_counts": {
-        "attack": 28,
-        "normal": 55
+        "attack": 29,
+        "normal": 54
       },
       "test_class_counts": {
-        "attack": 7,
-        "normal": 4
+        "attack": 6,
+        "normal": 5
       },
-      "training_time_seconds": 0.024330600004759617,
-      "accuracy": 0.5454545454545454,
-      "precision": 0.6666666666666666,
-      "recall": 0.5714285714285714,
-      "f1": 0.6153846153846154,
-      "false_positive_rate": 0.5,
+      "training_time_seconds": 0.02514699997846037,
+      "accuracy": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "false_positive_rate": 0.0,
       "confusion_matrix": [
         [
-          2,
-          2
+          5,
+          0
         ],
         [
-          3,
-          4
+          0,
+          6
         ]
       ],
-      "inference_time_seconds": 0.0014261000033002347,
-      "inference_time_per_sample_seconds": 0.00012964545484547588,
+      "inference_time_seconds": 0.0010950000141747296,
+      "inference_time_per_sample_seconds": 9.954545583406633e-05,
       "detection_latency_seconds": null,
       "detection_latency_note": "Unavailable: no ground-truth attack onset event is available in the held-out data."
     },
@@ -185,31 +185,31 @@
         "20260920T095700Z_workload_attack_28c39209"
       ],
       "training_class_counts": {
-        "attack": 28,
-        "normal": 55
+        "attack": 29,
+        "normal": 54
       },
       "test_class_counts": {
-        "attack": 7,
-        "normal": 4
+        "attack": 6,
+        "normal": 5
       },
-      "training_time_seconds": 0.003081699993344955,
-      "accuracy": 0.5454545454545454,
-      "precision": 0.6666666666666666,
-      "recall": 0.5714285714285714,
-      "f1": 0.6153846153846154,
-      "false_positive_rate": 0.5,
+      "training_time_seconds": 0.00554270000429824,
+      "accuracy": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "false_positive_rate": 0.0,
       "confusion_matrix": [
         [
-          2,
-          2
+          5,
+          0
         ],
         [
-          3,
-          4
+          0,
+          6
         ]
       ],
-      "inference_time_seconds": 0.00046799999836366624,
-      "inference_time_per_sample_seconds": 4.254545439669693e-05,
+      "inference_time_seconds": 0.0009645999816711992,
+      "inference_time_per_sample_seconds": 8.769090742465447e-05,
       "detection_latency_seconds": null,
       "detection_latency_note": "Unavailable: no ground-truth attack onset event is available in the held-out data."
     }
