@@ -263,7 +263,7 @@ def render_overview(
         wl_cpu = r.workload_features.get("workload_cpu_millicores_mean", 0.0) if r.workload_features else 0.0
 
         if not inf and wl_inf:
-            if wl_inf.predicted_label == "attack" and wl_cpu <= 0.0:
+            if wl_inf.predicted_label == "attack" and wl_cpu <= 1.0:
                 inf = None
             else:
                 inf = wl_inf

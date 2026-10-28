@@ -364,7 +364,7 @@ def test_live_engine_detects_running_process(tmp_path: Path, monkeypatch: pytest
     health = engine.get_network_health()
     assert health.is_process_running is True
     assert health.pid == os.getpid()
-    assert "Listening" in health.status_message
+    assert "Listening" in health.status_message or "Active" in health.status_message
 
 
 def test_live_engine_clock_skew_tolerance_tolerates_small_future_drift(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

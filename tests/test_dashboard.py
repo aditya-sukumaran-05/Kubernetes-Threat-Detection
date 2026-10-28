@@ -864,5 +864,62 @@ def test_get_historical_active_windows_caching_and_invalidation(tmp_path: Path) 
     assert res3[-1]["network_events"] == 1
 
 
+def test_dashboard_live_capture_idle_workload_safeguard_suppresses_false_attack(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify that an uncorroborated idle workload inference with CPU <= 1.0m does not trigger a false attack alert banner or inflate Threat Breakdown in Live Detection."""
+    from dashboard.live_engine import LiveTelemetryEngine, LiveWindowRecord
+    from ml.inference import InferenceResult
+
+    def mock_process(self, model_name="random_forest"):
+        rec = LiveWindowRecord(
+            window_start="2026-10-28T01:25:40.000Z",
+            window_end="2026-10-28T01:25:50.000Z",
+            affected_pods="webapp-79699899c5-wds9h",
+            network_available=False,
+            workload_available=True,
+            runtime_available=False,
+            workload_features={
+                "workload_cpu_millicores_mean": 0.5,
+                "workload_memory_mib_mean": 13.5,
+                "workload_sample_count": 2,
+            },
+        )
+        rec.workload_inferences[model_name] = InferenceResult(
+            model_name=model_name,
+            modality="workload",
+            predicted_label="attack",
+            confidence=0.75,
+            attack_probability=0.75,
+            window_start=rec.window_start,
+            window_end=rec.window_end,
+            evidence={"workload_sample_count": 2.0},
+        )
+        return [rec]
+
+    monkeypatch.setattr(LiveTelemetryEngine, "process_live_telemetry", mock_process)
+
+    at = AppTest.from_file("dashboard/app.py")
+    at.run(timeout=25)
+
+    at.sidebar.radio[0].set_value(NAV_LIVE)
+    at.sidebar.selectbox[0].set_value("workload")
+    at.run(timeout=25)
+
+    assert not at.exception
+    # Threat Breakdown must report 0 Alert / 1 Normal (not 1 Alert / 0 Normal)
+    threat_breakdown = [m for m in at.metric if m.label == "Threat Breakdown"]
+    assert len(threat_breakdown) == 1
+    assert "0 Alert" in threat_breakdown[0].value
+    assert "1 Normal" in threat_breakdown[0].value
+
+    # Must NOT have a red error banner for the idle baseline
+    error_banners = [e.value for e in at.error]
+    assert not any("PREDICTED THREAT DETECTED" in e for e in error_banners)
+
+    # Must render the informative safeguard banner
+    info_banners = [i.value for i in at.info]
+    assert any("Idle Baseline Safeguard Applied" in i for i in info_banners)
+
+
+
 
 
